@@ -11,13 +11,18 @@ so a restarted run skips them. Buildings with no journey or unknown to the API a
 recorded too (status "no_journey" or "not_found"); buildings whose requests fail are
 not, so they are retried next run.
 
+With --sample-hex RES, buildings are grouped into H3 hexagons of that resolution and
+only one row is written per hexagon: the building nearest the hexagon's centre, or
+the next nearest (up to --hex-candidates) when it has no journey or is not found.
+
 Usage:
-    uv run get_sydney_building_travel_time.py --workers 8 [--limit 100]
+    uv run get_sydney_building_travel_time.py --workers 8 [--limit 100] [--sample-hex 9]
 """
 
 import argparse
 import csv
 import itertools
+import math
 import os
 import sys
 import time
@@ -27,6 +32,8 @@ from dataclasses import asdict, fields
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import h3
+
 from fastest_journey import JourneySummary, fastest_journey
 from main import SYDNEY_TZ, ApiError
 
@@ -34,7 +41,7 @@ QVB = "GANSW706029353"  # 429-481 George Street, Sydney NSW 2000
 LOG_NAME = "processed.log"
 BATCH_PREFIX = "travel_times_"
 MAX_ATTEMPTS = 4
-COLUMNS = ["address_detail_pid", "status", *(f.name for f in fields(JourneySummary))]
+COLUMNS = ["address_detail_pid", "status", "h3_cell", *(f.name for f in fields(JourneySummary))]
 
 
 def first_monday(year: int, month: int) -> date:
@@ -107,7 +114,7 @@ class BatchWriter:
         self.next_index += 1
         self.rows = []
         rate = self.written / (time.monotonic() - self.started)
-        log(f"Wrote {path.name}: {self.written:,} buildings this run ({rate:.1f}/s)")
+        log(f"Wrote {path.name}: {self.written:,} rows this run ({rate:.1f}/s)")
 
 
 def journey_row(pid: str, address: str, arrive_by: datetime) -> dict:
@@ -129,11 +136,45 @@ def journey_row(pid: str, address: str, arrive_by: datetime) -> dict:
     return {**base, "status": "ok", **asdict(journey)}
 
 
-def pending_buildings(input_path: Path, processed: set[str]) -> Iterator[tuple[str, str]]:
+def first_ok_row(candidates: list[tuple[str, str]], arrive_by: datetime, h3_cell: str) -> dict:
+    """Row for the first candidate building with a journey, or for the last one tried."""
+    for pid, address in candidates:
+        row = journey_row(pid, address, arrive_by)
+        if row["status"] == "ok":
+            break
+    return {**row, "h3_cell": h3_cell}
+
+
+Work = tuple[str, list[tuple[str, str]]]  # (h3 cell or "", candidate (pid, address) pairs)
+
+
+def pending_buildings(input_path: Path, processed: set[str]) -> Iterator[Work]:
     with input_path.open(newline="") as f:
         for row in csv.DictReader(f):
             if row["address_detail_pid"] not in processed:
-                yield row["address_detail_pid"], row["address"]
+                yield "", [(row["address_detail_pid"], row["address"])]
+
+
+def pending_hexes(input_path: Path, processed: set[str], resolution: int, max_candidates: int) -> Iterator[Work]:
+    """One work item per hexagon not yet done, with its buildings nearest the centre first."""
+    hexes: dict[str, list[tuple[str, str, float, float]]] = {}
+    with input_path.open(newline="") as f:
+        for row in csv.DictReader(f):
+            if row["latitude"]:
+                lat, lon = float(row["latitude"]), float(row["longitude"])
+                cell = h3.latlng_to_cell(lat, lon, resolution)
+                hexes.setdefault(cell, []).append((row["address_detail_pid"], row["address"], lat, lon))
+    done = sum(any(b[0] in processed for b in hexes[cell]) for cell in hexes)
+    log(f"{len(hexes):,} hexagons at resolution {resolution}, {done:,} already processed")
+
+    for cell in sorted(hexes):
+        buildings = hexes[cell]
+        if any(pid in processed for pid, *_ in buildings):
+            continue
+        c_lat, c_lon = h3.cell_to_latlng(cell)
+        scale = math.cos(math.radians(c_lat))
+        buildings.sort(key=lambda b: (b[2] - c_lat) ** 2 + ((b[3] - c_lon) * scale) ** 2)
+        yield cell, [(pid, address) for pid, address, *_ in buildings[:max_candidates]]
 
 
 def main() -> int:
@@ -146,7 +187,11 @@ def main() -> int:
         "--arrive-by", type=datetime.fromisoformat, default=ARRIVE_BY,
         help=f"ISO date-time, Sydney local if no offset (default: {ARRIVE_BY:%Y-%m-%dT%H:%M})",
     )
-    parser.add_argument("--limit", type=int, help="Process at most this many buildings in this run")
+    parser.add_argument("--limit", type=int, help="Process at most this many buildings (or hexagons) in this run")
+    parser.add_argument("--sample-hex", type=int, choices=range(0, 16), metavar="RES",
+                        help="Process one building per H3 hexagon of this resolution (e.g. 9)")
+    parser.add_argument("--hex-candidates", type=int, default=3,
+                        help="With --sample-hex, buildings to try per hexagon until one has a journey (default: 3)")
     args = parser.parse_args()
     if "ADDRESS_INFO_API_KEY" not in os.environ:
         parser.error("set ADDRESS_INFO_API_KEY in .env or the environment")
@@ -155,9 +200,12 @@ def main() -> int:
     processed = load_processed(args.output_dir)
     log(f"Arrive by {args.arrive_by:%a %d %b %Y %H:%M}; {len(processed):,} buildings already processed")
 
-    buildings = pending_buildings(args.input, processed)
+    if args.sample_hex is None:
+        work = pending_buildings(args.input, processed)
+    else:
+        work = pending_hexes(args.input, processed, args.sample_hex, args.hex_candidates)
     if args.limit:
-        buildings = itertools.islice(buildings, args.limit)
+        work = itertools.islice(work, args.limit)
 
     writer = BatchWriter(args.output_dir, args.batch_size)
     executor = ThreadPoolExecutor(max_workers=args.workers)
@@ -167,17 +215,17 @@ def main() -> int:
     def collect(futures) -> None:
         nonlocal failed
         for future in futures:
-            pid = in_flight.pop(future)
+            label = in_flight.pop(future)
             try:
                 writer.add(future.result())
             except ApiError as e:
                 failed += 1
-                log(f"Failed {pid}: {e}")
+                log(f"Failed {label}: {e}")
 
     try:
         # Keep a bounded queue of requests instead of submitting all 1.7M at once.
-        for pid, address in buildings:
-            in_flight[executor.submit(journey_row, pid, address, args.arrive_by)] = pid
+        for cell, candidates in work:
+            in_flight[executor.submit(first_ok_row, candidates, args.arrive_by, cell)] = cell or candidates[0][0]
             if len(in_flight) >= args.workers * 2:
                 collect(wait(in_flight, return_when=FIRST_COMPLETED).done)
         collect(list(in_flight))
