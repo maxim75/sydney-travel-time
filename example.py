@@ -2,7 +2,8 @@
 
 from datetime import datetime
 
-from main import SYDNEY_TZ, fastest_journey
+from fastest_journey import fastest_journey
+from main import SYDNEY_TZ
 
 MARTON_PUBLIC_SCHOOL = "GANSW711624184"  # 107 Kingswood Road, Engadine NSW 2233
 QVB = "GANSW706029353"  # 429-481 George Street, Sydney NSW 2000
