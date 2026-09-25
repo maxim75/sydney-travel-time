@@ -1,0 +1,10 @@
+[project]
+name = "sydney-travel-time"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openpyxl>=3.1.5",
+    "python-dotenv>=1.2.3",
+]
