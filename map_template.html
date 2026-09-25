@@ -1,0 +1,559 @@
+<meta charset="utf-8">
+<title>Commute to the QVB</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+:root {
+  --surface: #fcfcfb;
+  --panel: #f3f2ee;
+  --ink: #1b1f24;
+  --ink-2: #4f555c;
+  --ink-3: #7b8087;
+  --hairline: #dddbd4;
+  --ghost: #e8e7e1;
+  --nojourney: #b3b1aa;
+  --focus: #2a78d6;
+  --r0: #86b6ef; --r1: #5598e7; --r2: #2a78d6; --r3: #1c5cab; --r4: #104281; --r5: #0a2a52;
+  --sans: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  --cond: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: #1a1a19; --panel: #232321; --ink: #ecebe6; --ink-2: #b4b3ad; --ink-3: #8a8983;
+    --hairline: #363532; --ghost: #2b2b28; --nojourney: #5d5c56; --focus: #6da7ec;
+    --r0: #cde2fb; --r1: #9ec5f4; --r2: #6da7ec; --r3: #3987e5; --r4: #256abf; --r5: #184f95;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #1a1a19; --panel: #232321; --ink: #ecebe6; --ink-2: #b4b3ad; --ink-3: #8a8983;
+  --hairline: #363532; --ghost: #2b2b28; --nojourney: #5d5c56; --focus: #6da7ec;
+  --r0: #cde2fb; --r1: #9ec5f4; --r2: #6da7ec; --r3: #3987e5; --r4: #256abf; --r5: #184f95;
+}
+
+body { background: var(--surface); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.45; }
+.wrap { max-width: 1280px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: grid; gap: 16px; }
+.num { font-variant-numeric: tabular-nums; }
+
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--cond); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin: 0; }
+h1 { font-family: var(--cond); font-weight: 700; font-size: clamp(28px, 4.2vw, 40px); line-height: 1.05; margin: 0; text-wrap: balance; }
+.sub { margin: 0; color: var(--ink-2); max-width: 68ch; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: end; }
+.stat { display: grid; gap: 2px; }
+.stat b { font-family: var(--cond); font-weight: 600; font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 13px; color: var(--ink-3); }
+.progress { width: min(220px, 60vw); height: 6px; border-radius: 3px; background: var(--ghost); overflow: hidden; margin-top: 4px; }
+.progress i { display: block; height: 100%; background: var(--ink-2); border-radius: 3px; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center; }
+.group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.group > span { font-family: var(--cond); font-weight: 600; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin-right: 4px; }
+.seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
+.seg button, .chip { font: 500 14px var(--sans); color: var(--ink-2); background: transparent; border: 0; padding: 6px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--hairline); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.chip { border: 1px solid var(--hairline); border-radius: 999px; padding: 5px 12px; }
+.chip[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); background: var(--panel); box-shadow: inset 0 0 0 1px var(--ink); }
+button:focus-visible, input:focus-visible, th button:focus-visible, tr:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.mapbox { position: relative; height: clamp(420px, 72vh, 820px); border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; background: var(--surface); touch-action: none; }
+canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+canvas.dragging { cursor: grabbing; }
+.zoom { position: absolute; top: 12px; right: 12px; display: grid; gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
+.zoom button { width: 34px; height: 34px; border: 0; background: var(--surface); color: var(--ink); font: 600 18px var(--sans); cursor: pointer; }
+.zoom button.reset { font: 600 11px var(--cond); letter-spacing: .04em; text-transform: uppercase; }
+.hint { position: absolute; left: 12px; top: 12px; font-size: 12px; color: var(--ink-3); background: color-mix(in srgb, var(--surface) 85%, transparent); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+
+.tip { position: absolute; z-index: 2; pointer-events: none; width: max-content; max-width: min(300px, calc(100% - 24px)); background: var(--surface); color: var(--ink); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / .14); padding: 10px 12px; display: grid; gap: 6px; font-size: 13px; }
+.tip strong { font-weight: 600; font-size: 14px; line-height: 1.25; }
+.tip .muted { color: var(--ink-3); }
+.tip dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
+.tip dt { color: var(--ink-3); }
+.tip dd { margin: 0; font-variant-numeric: tabular-nums; }
+.tip .big { font-family: var(--cond); font-weight: 700; font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; }
+.modes { display: flex; flex-wrap: wrap; gap: 4px; }
+.modes b { font: 600 11px var(--cond); letter-spacing: .05em; text-transform: uppercase; border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 5px; color: var(--ink-2); }
+
+.below { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 24px; align-items: start; }
+.legend { display: grid; gap: 10px; }
+.legend h2, .suburbs h2 { font-family: var(--cond); font-weight: 600; font-size: 18px; margin: 0; }
+.bars { display: grid; grid-template-columns: 14px auto 1fr auto; gap: 6px 10px; align-items: center; font-size: 13px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; }
+.sw.hatch { background: repeating-linear-gradient(135deg, var(--nojourney) 0 2px, var(--ghost) 2px 5px); }
+.bar { height: 8px; border-radius: 0 4px 4px 0; background: var(--ink-3); opacity: .55; min-width: 1px; }
+.bars .n { color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
+.bars .sep { grid-column: 1 / -1; height: 1px; background: var(--hairline); margin-block: 2px; }
+.note { font-size: 13px; color: var(--ink-3); margin: 0; max-width: 60ch; }
+
+.suburbs { display: grid; gap: 10px; min-width: 0; }
+.suburbs .head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+.suburbs input { font: 14px var(--sans); color: var(--ink); background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; padding: 6px 10px; width: min(240px, 100%); }
+.tablebox { max-height: 420px; overflow: auto; border: 1px solid var(--hairline); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+th { position: sticky; top: 0; background: var(--panel); text-align: right; font-weight: 500; padding: 0; border-bottom: 1px solid var(--hairline); }
+th:first-child, td:first-child { text-align: left; }
+th button { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 8px 12px; cursor: pointer; font: 600 13px var(--cond); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); }
+th button[aria-sort]::after { content: " ↓"; }
+th button[aria-sort="ascending"]::after { content: " ↑"; }
+td { padding: 6px 12px; text-align: right; border-bottom: 1px solid var(--hairline); white-space: nowrap; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--panel); }
+td .sw { display: inline-block; vertical-align: -2px; margin-right: 6px; width: 10px; height: 10px; }
+.empty { padding: 16px; color: var(--ink-3); }
+
+@media (max-width: 760px) {
+  .below { grid-template-columns: 1fr; }
+  .mapbox { height: clamp(380px, 64vh, 620px); }
+  .hint { display: none; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Greater Sydney · public transport · fastest trip</p>
+    <h1>How long does it take to get to the QVB?</h1>
+    <p class="sub" id="sub"></p>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <div class="controls">
+    <div class="group" role="group" aria-label="Colour by">
+      <span>Colour by</span>
+      <div class="seg" id="metric">
+        <button type="button" id="m-time" data-v="time" aria-pressed="true">Journey time</button>
+        <button type="button" id="m-walk" data-v="walk" aria-pressed="false">Walking</button>
+        <button type="button" id="m-rides" data-v="rides" aria-pressed="false">Rides</button>
+      </div>
+    </div>
+    <div class="group" role="group" aria-label="Show trips">
+      <span>Show</span>
+      <div class="group" id="filter">
+        <button type="button" class="chip" id="f-all" data-v="all" aria-pressed="true">All trips</button>
+        <button type="button" class="chip" id="f-train" data-v="train" aria-pressed="false">Using train</button>
+        <button type="button" class="chip" id="f-bus" data-v="bus" aria-pressed="false">Bus only</button>
+        <button type="button" class="chip" id="f-ferry" data-v="ferry" aria-pressed="false">Using ferry</button>
+        <button type="button" class="chip" id="f-tram" data-v="tram" aria-pressed="false">Using light rail</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="mapbox" id="mapbox">
+    <canvas id="map" role="img" aria-label="Map of Greater Sydney coloured by travel time to the Queen Victoria Building"></canvas>
+    <div class="hint">Drag to pan · scroll to zoom · hover a hexagon</div>
+    <div class="zoom">
+      <button type="button" id="zin" aria-label="Zoom in">+</button>
+      <button type="button" id="zout" aria-label="Zoom out">−</button>
+      <button type="button" id="zreset" class="reset" aria-label="Show all of Sydney">All</button>
+    </div>
+    <div class="tip" id="tip" hidden></div>
+  </div>
+
+  <div class="below">
+    <section class="legend" aria-labelledby="legend-title">
+      <h2 id="legend-title">Journey time</h2>
+      <div class="bars" id="bars"></div>
+      <p class="note" id="legend-note"></p>
+    </section>
+
+    <section class="suburbs" aria-labelledby="suburbs-title">
+      <div class="head">
+        <h2 id="suburbs-title">Suburbs</h2>
+        <input id="search" type="search" placeholder="Find a suburb" aria-label="Find a suburb">
+      </div>
+      <div class="tablebox">
+        <table>
+          <thead><tr>
+            <th scope="col"><button type="button" data-k="name">Suburb</button></th>
+            <th scope="col"><button type="button" data-k="median" aria-sort="ascending">Median trip</button></th>
+            <th scope="col"><button type="button" data-k="fastest">Fastest</button></th>
+            <th scope="col"><button type="button" data-k="train">Using train</button></th>
+            <th scope="col"><button type="button" data-k="done">Hexagons</button></th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="note">Each hexagon is about 400 m across and shows one sample building near its centre. Select a suburb to zoom to it.</p>
+    </section>
+  </div>
+</div>
+
+<script id="map-data" type="application/json">/*__DATA__*/null</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById("map-data").textContent);
+const N = D.total, S = D.scale;
+const COS = Math.cos(-33.87 * Math.PI / 180);
+const fmt = n => n.toLocaleString("en-AU");
+
+// ---- geometry in world units (1e-5 degrees, x scaled by cos(latitude), y pointing down)
+const cx = new Float64Array(N), cy = new Float64Array(N), start = new Uint32Array(N + 1);
+const pts = [];
+for (let i = 0; i < N; i++) {
+  const X = D.center[2 * i] * COS, Y = -D.center[2 * i + 1], v = D.verts[i];
+  cx[i] = X; cy[i] = Y; start[i] = pts.length / 2;
+  for (let j = 0; j < v.length; j += 2) pts.push(X + v[j] * COS, Y - v[j + 1]);
+}
+start[N] = pts.length / 2;
+const P = Float64Array.from(pts);
+const R = Math.hypot(P[0] - cx[0], P[1] - cy[0]);  // hexagon circumradius
+let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+for (let i = 0; i < N; i++) { minX = Math.min(minX, cx[i]); maxX = Math.max(maxX, cx[i]); minY = Math.min(minY, cy[i]); maxY = Math.max(maxY, cy[i]); }
+
+// spatial buckets for hover
+const G = R * 2, grid = new Map();
+for (let i = 0; i < N; i++) {
+  const key = Math.floor(cx[i] / G) + "," + Math.floor(cy[i] / G);
+  (grid.get(key) || grid.set(key, []).get(key)).push(i);
+}
+function cellAt(X, Y) {
+  const gx = Math.floor(X / G), gy = Math.floor(Y / G);
+  let best = -1, bd = R * R;
+  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+    for (const i of grid.get((gx + a) + "," + (gy + b)) || []) {
+      const d = (cx[i] - X) ** 2 + (cy[i] - Y) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+  }
+  return best;
+}
+
+// ---- metrics and filters
+const METRICS = {
+  time: { title: "Journey time", value: i => D.minutes[i],
+    band: v => v <= 30 ? 0 : v <= 45 ? 1 : v <= 60 ? 2 : v <= 90 ? 3 : v <= 120 ? 4 : 5,
+    labels: ["30 min or less", "31–45 min", "46–60 min", "61–90 min", "91–120 min", "Over 2 hours"] },
+  walk: { title: "Walking time", value: i => D.walkMin[i],
+    band: v => v <= 5 ? 0 : v <= 10 ? 1 : v <= 15 ? 2 : v <= 20 ? 3 : v <= 30 ? 4 : 5,
+    labels: ["5 min or less", "6–10 min", "11–15 min", "16–20 min", "21–30 min", "Over 30 min"] },
+  rides: { title: "Rides taken", value: i => D.transports[i],
+    band: v => Math.min(v, 5),
+    labels: ["Walk only", "1 ride", "2 rides", "3 rides", "4 rides", "5 or more"] },
+};
+const FILTERS = {
+  all: () => true,
+  train: m => (m & 2) > 0,
+  bus: m => m === 1,
+  ferry: m => (m & 4) > 0,
+  tram: m => (m & 8) > 0,
+};
+// class per cell: 0 ghost, 1 no journey, 2 not found, 3..8 bands
+let metric = "time", filter = "all";
+const cls = new Uint8Array(N);
+function classify() {
+  const M = METRICS[metric], F = FILTERS[filter];
+  for (let i = 0; i < N; i++) {
+    const s = D.status[i];
+    if (s === 1 && F(D.modes[i])) cls[i] = 3 + M.band(M.value(i));
+    else if (filter === "all" && s === 2) cls[i] = 1;
+    else if (filter === "all" && s === 3) cls[i] = 2;
+    else cls[i] = 0;
+  }
+}
+
+// ---- theme tokens
+let T = {};
+function readTokens() {
+  const cs = getComputedStyle(document.documentElement);
+  const g = n => cs.getPropertyValue(n).trim();
+  T = { surface: g("--surface"), ink: g("--ink"), ink3: g("--ink-3"), ghost: g("--ghost"), nojourney: g("--nojourney"),
+        ramp: [0, 1, 2, 3, 4, 5].map(k => g("--r" + k)) };
+  const c = document.createElement("canvas"); c.width = c.height = 6;
+  const x = c.getContext("2d");
+  x.fillStyle = T.ghost; x.fillRect(0, 0, 6, 6);
+  x.strokeStyle = T.nojourney; x.lineWidth = 1.6;
+  x.beginPath(); x.moveTo(-1, 7); x.lineTo(7, -1); x.moveTo(-1, 1); x.lineTo(1, -1); x.moveTo(5, 7); x.lineTo(7, 5); x.stroke();
+  T.hatch = ctx.createPattern(c, "repeat");
+}
+
+// ---- view
+const box = document.getElementById("mapbox"), canvas = document.getElementById("map"), ctx = canvas.getContext("2d");
+let W = 0, H = 0, dpr = 1, k = 1, tx = 0, ty = 0, kFit = 1, hover = -1, pinned = false;
+function fit(x0, y0, x1, y1, pad = 0.92) {
+  const bw = Math.max(x1 - x0, R * 12), bh = Math.max(y1 - y0, R * 12);
+  k = Math.min(W / bw, H / bh) * pad;
+  tx = W / 2 - (x0 + x1) / 2 * k; ty = H / 2 - (y0 + y1) / 2 * k;
+}
+function fitAll() { fit(minX - R, minY - R, maxX + R, maxY + R); kFit = k; }
+function zoomAt(f, sx, sy) {
+  const nk = Math.min(Math.max(k * f, kFit * 0.7), kFit * 80);
+  tx = sx - (sx - tx) * nk / k; ty = sy - (sy - ty) * nk / k; k = nk; schedule();
+}
+function resize() {
+  const r = canvas.getBoundingClientRect();
+  const first = W === 0;
+  const ox = W / 2, oy = H / 2;
+  W = r.width; H = r.height; dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  if (first) fitAll(); else { tx += W / 2 - ox; ty += H / 2 - oy; }
+  schedule();
+}
+
+let queued = false;
+function schedule() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } }
+
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = T.surface; ctx.fillRect(0, 0, W, H);
+  const paths = Array.from({ length: 9 }, () => new Path2D());
+  const m = R * k;
+  for (let i = 0; i < N; i++) {
+    const sx = cx[i] * k + tx, sy = cy[i] * k + ty;
+    if (sx < -m || sy < -m || sx > W + m || sy > H + m) continue;
+    const p = paths[cls[i]];
+    for (let j = start[i]; j < start[i + 1]; j++) {
+      const x = P[2 * j] * k + tx, y = P[2 * j + 1] * k + ty;
+      j === start[i] ? p.moveTo(x, y) : p.lineTo(x, y);
+    }
+    p.closePath();
+  }
+  const fills = [T.ghost, T.nojourney, T.hatch, ...T.ramp];
+  paths.forEach((p, c) => { ctx.fillStyle = fills[c]; ctx.fill(p); });
+  if (m > 7) {  // surface gap between hexagons once they are big enough to see
+    ctx.strokeStyle = T.surface; ctx.lineWidth = Math.min(2, m / 10);
+    paths.forEach(p => ctx.stroke(p));
+  }
+  if (hover >= 0) {
+    ctx.beginPath();
+    for (let j = start[hover]; j < start[hover + 1]; j++) {
+      const x = P[2 * j] * k + tx, y = P[2 * j + 1] * k + ty;
+      j === start[hover] ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = T.surface; ctx.stroke();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = T.ink; ctx.stroke();
+  }
+  drawLabels();
+}
+
+function drawLabels() {
+  const boxes = [];
+  const put = (text, x, y, font, color, weight = 2) => {
+    ctx.font = font;
+    const w = ctx.measureText(text).width;
+    const b = [x - w / 2 - 3, y - 9, x + w / 2 + 3, y + 9];
+    if (b[2] < 0 || b[0] > W || b[3] < 0 || b[1] > H) return;
+    if (boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1])) return;
+    boxes.push(b);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+    ctx.lineWidth = weight * 2; ctx.strokeStyle = T.surface; ctx.strokeText(text, x, y);
+    ctx.fillStyle = color; ctx.fillText(text, x, y);
+  };
+  // QVB marker first so labels avoid it
+  const qx = D.qvb[0] * COS * k + tx, qy = -D.qvb[1] * k + ty;
+  ctx.beginPath(); ctx.arc(qx, qy, 6, 0, Math.PI * 2);
+  ctx.fillStyle = T.ink; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = T.surface; ctx.stroke();
+  boxes.push([qx - 8, qy - 8, qx + 8, qy + 8]);
+  put("QVB", qx, qy - 17, "700 14px 'Barlow Condensed', 'Arial Narrow', sans-serif", T.ink, 3);
+  const showTier2 = k / kFit > 2.2;
+  for (const [name, lx, ly, tier] of D.labels) {
+    if (tier === 2 && !showTier2) continue;
+    put(name, lx * COS * k + tx, -ly * k + ty,
+        (tier === 1 ? "600 13px" : "500 12px") + " 'Barlow Condensed', 'Arial Narrow', sans-serif", T.ink, 2);
+  }
+}
+
+// ---- tooltip
+const tip = document.getElementById("tip");
+const MODE_NAMES = [[1, "Bus"], [2, "Train / Metro"], [4, "Ferry"], [8, "Light rail"]];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function showTip(i, sx, sy) {
+  const s = D.status[i], sub = esc(D.localities[D.loc[i]]);
+  let html;
+  if (s === 1) {
+    const modes = MODE_NAMES.filter(([b]) => D.modes[i] & b).map(([, n]) => `<b>${n}</b>`).join("");
+    html = `<strong>${esc(D.address[i])}</strong>
+      <div class="big">${D.minutes[i]} min</div>
+      <dl><dt>Leave</dt><dd>${D.depart[i]} → arrive ${D.arrive[i]}</dd>
+      <dt>Walking</dt><dd>${D.walkMin[i]} min · ${fmt(D.walkM[i])} m</dd>
+      <dt>Rides</dt><dd>${D.transports[i]}</dd></dl>
+      ${modes ? `<div class="modes">${modes}</div>` : ""}`;
+  } else if (s === 2) {
+    html = `<strong>${esc(D.address[i])}</strong><span class="muted">No public transport journey found arriving by ${esc(D.arriveBy.split(" on ")[0])}.</span>`;
+  } else if (s === 3) {
+    html = `<strong>${esc(D.address[i])}</strong><span class="muted">The journey planner doesn't know this address or the nearby ones tried.</span>`;
+  } else {
+    html = `<strong>${sub}</strong><span class="muted">Not computed yet.</span>`;
+  }
+  if (s) html = html.replace("</strong>", `</strong><span class="muted">${sub}</span>`);
+  tip.innerHTML = html; tip.hidden = false;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  let x = sx + 14, y = sy + 14;
+  if (x + tw > W - 8) x = sx - tw - 14;
+  if (y + th > H - 8) y = sy - th - 14;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+function setHover(i, sx, sy) {
+  if (i !== hover) { hover = i; schedule(); }
+  if (i >= 0) showTip(i, sx, sy); else tip.hidden = true;
+}
+
+// ---- pointer interaction: drag to pan, pinch or wheel to zoom, hover or tap to inspect
+const ptrs = new Map();
+let moved = 0, lastPinch = 0;
+const local = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+canvas.addEventListener("pointerdown", e => {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, local(e)); moved = 0;
+  if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; lastPinch = Math.hypot(a[0] - b[0], a[1] - b[1]); }
+});
+canvas.addEventListener("pointermove", e => {
+  const [x, y] = local(e);
+  if (!ptrs.has(e.pointerId)) {
+    if (e.pointerType === "mouse" && !pinned) setHover(cellAt((x - tx) / k, (y - ty) / k), x, y);
+    return;
+  }
+  const [px, py] = ptrs.get(e.pointerId);
+  ptrs.set(e.pointerId, [x, y]);
+  if (ptrs.size === 1) {
+    tx += x - px; ty += y - py; moved += Math.abs(x - px) + Math.abs(y - py);
+    if (moved > 4) { canvas.classList.add("dragging"); tip.hidden = true; pinned = false; }
+    schedule();
+  } else if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    if (lastPinch) zoomAt(d / lastPinch, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+    lastPinch = d; moved = 99;
+  }
+});
+const release = e => {
+  const wasTap = ptrs.size === 1 && moved <= 4;
+  ptrs.delete(e.pointerId); canvas.classList.remove("dragging");
+  if (ptrs.size < 2) lastPinch = 0;
+  if (wasTap && e.type === "pointerup") {
+    const [x, y] = local(e);
+    const i = cellAt((x - tx) / k, (y - ty) / k);
+    pinned = e.pointerType !== "mouse" && i >= 0;
+    setHover(i, x, y);
+  }
+};
+canvas.addEventListener("pointerup", release);
+canvas.addEventListener("pointercancel", release);
+canvas.addEventListener("pointerleave", e => { if (e.pointerType === "mouse" && !pinned) setHover(-1); });
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const [x, y] = local(e);
+  zoomAt(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0018)), x, y);
+  tip.hidden = true; pinned = false;
+}, { passive: false });
+document.getElementById("zin").onclick = () => zoomAt(1.6, W / 2, H / 2);
+document.getElementById("zout").onclick = () => zoomAt(1 / 1.6, W / 2, H / 2);
+document.getElementById("zreset").onclick = () => { fitAll(); tip.hidden = true; pinned = false; hover = -1; schedule(); };
+
+// ---- header, legend
+const ok = [];
+for (let i = 0; i < N; i++) if (D.status[i] === 1) ok.push(D.minutes[i]);
+ok.sort((a, b) => a - b);
+const median = a => a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : Math.round((a[a.length / 2 - 1] + a[a.length / 2]) / 2)) : null;
+const noJourney = D.status.filter(s => s === 2).length, notFound = D.status.filter(s => s === 3).length;
+const pct = D.computed / D.total;
+document.getElementById("sub").textContent =
+  `Fastest public transport trip from each part of Greater Sydney to the Queen Victoria Building, arriving by ${D.arriveBy}. ` +
+  `Each hexagon is coloured by one sample building near its centre.`;
+document.getElementById("stats").innerHTML = `
+  <div class="stat"><b>${fmt(D.computed)} <span>of ${fmt(D.total)}</span></b><span>hexagons computed (${(pct * 100).toFixed(pct < 0.1 ? 1 : 0)}%)</span>
+    <div class="progress" aria-hidden="true"><i style="width:${(pct * 100).toFixed(2)}%"></i></div></div>
+  <div class="stat"><b>${ok.length ? median(ok) + " min" : "–"}</b><span>median trip</span></div>
+  <div class="stat"><b>${ok.length ? ok[0] + " min" : "–"}</b><span>fastest</span></div>
+  <div class="stat"><b>${fmt(noJourney)}</b><span>with no journey found</span></div>`;
+
+function renderLegend() {
+  const M = METRICS[metric];
+  document.getElementById("legend-title").textContent = M.title;
+  const counts = new Array(9).fill(0);
+  for (let i = 0; i < N; i++) counts[cls[i]]++;
+  const bandMax = Math.max(1, ...counts.slice(3));
+  const row = (sw, label, n, bar) => `<span class="sw ${sw.cls || ""}" style="${sw.bg ? `background:${sw.bg}` : ""}"></span>
+    <span>${label}</span><span>${bar ? `<i class="bar" style="display:block;width:${(n / bandMax * 100).toFixed(1)}%"></i>` : ""}</span>
+    <span class="n">${fmt(n)}</span>`;
+  let html = M.labels.map((l, b) => row({ bg: `var(--r${b})` }, l, counts[3 + b], true)).join("");
+  html += `<span class="sep"></span>`;
+  if (filter === "all") {
+    html += row({ bg: "var(--nojourney)" }, "No journey found", counts[1]);
+    html += row({ cls: "hatch" }, "Address not in planner", counts[2]);
+    html += row({ bg: "var(--ghost)" }, "Not computed yet", N - D.computed);
+  } else {
+    html += row({ bg: "var(--ghost)" }, "Other trips or not computed", counts[0]);
+  }
+  document.getElementById("bars").innerHTML = html;
+  document.getElementById("legend-note").textContent = D.computed < D.total
+    ? "Results are still being computed; grey areas fill in as the run continues."
+    : "Bars show how many hexagons fall in each band.";
+}
+
+// ---- suburb table
+const sub = new Map();
+for (let i = 0; i < N; i++) {
+  const l = D.loc[i];
+  let r = sub.get(l);
+  if (!r) sub.set(l, r = { name: D.localities[l], mins: [], train: 0, cells: [], total: 0 });
+  r.total++; r.cells.push(i);
+  if (D.status[i] === 1) { r.mins.push(D.minutes[i]); if (D.modes[i] & 2) r.train++; }
+}
+const subs = [...sub.values()].filter(r => r.mins.length).map(r => {
+  r.mins.sort((a, b) => a - b);
+  return Object.assign(r, { median: median(r.mins), fastest: r.mins[0], trainShare: r.train / r.mins.length, done: r.mins.length });
+});
+let sortKey = "median", sortDir = 1;
+function renderTable() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const key = { name: r => r.name, median: r => r.median, fastest: r => r.fastest, train: r => r.trainShare, done: r => r.done }[sortKey];
+  const rows = subs.filter(r => !q || r.name.toLowerCase().includes(q))
+    .sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * sortDir || a.name.localeCompare(b.name); });
+  const tb = document.getElementById("rows");
+  tb.innerHTML = rows.length ? rows.map(r => `<tr tabindex="0" data-l="${esc(r.name)}">
+      <td>${esc(r.name)}</td>
+      <td><span class="sw" style="background:var(--r${METRICS.time.band(r.median)})"></span>${r.median} min</td>
+      <td>${r.fastest} min</td><td>${Math.round(r.trainShare * 100)}%</td>
+      <td>${fmt(r.done)} / ${fmt(r.total)}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="empty">${subs.length ? "No suburb matches that search." : "No suburbs have results yet."}</td></tr>`;
+  document.querySelectorAll("th button").forEach(b => {
+    if (b.dataset.k === sortKey) b.setAttribute("aria-sort", sortDir > 0 ? "ascending" : "descending");
+    else b.removeAttribute("aria-sort");
+  });
+}
+function zoomToSuburb(name) {
+  const r = subs.find(s => s.name === name);
+  if (!r) return;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const i of r.cells) { x0 = Math.min(x0, cx[i]); x1 = Math.max(x1, cx[i]); y0 = Math.min(y0, cy[i]); y1 = Math.max(y1, cy[i]); }
+  fit(x0 - R * 3, y0 - R * 3, x1 + R * 3, y1 + R * 3, 0.8);
+  k = Math.min(k, kFit * 80); tip.hidden = true; pinned = false; hover = -1; schedule();
+  box.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+}
+document.getElementById("rows").addEventListener("click", e => { const tr = e.target.closest("tr[data-l]"); if (tr) zoomToSuburb(tr.dataset.l); });
+document.getElementById("rows").addEventListener("keydown", e => {
+  const tr = e.target.closest("tr[data-l]");
+  if (tr && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); zoomToSuburb(tr.dataset.l); }
+});
+document.querySelectorAll("th button").forEach(b => b.onclick = () => {
+  if (sortKey === b.dataset.k) sortDir = -sortDir; else { sortKey = b.dataset.k; sortDir = b.dataset.k === "name" || b.dataset.k === "median" || b.dataset.k === "fastest" ? 1 : -1; }
+  renderTable();
+});
+document.getElementById("search").addEventListener("input", renderTable);
+
+// ---- controls
+function press(groupId, v) {
+  document.querySelectorAll(`#${groupId} button`).forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === v)));
+}
+document.getElementById("metric").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  metric = b.dataset.v; press("metric", metric); classify(); renderLegend(); schedule();
+});
+document.getElementById("filter").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  filter = b.dataset.v; press("filter", filter); classify(); renderLegend(); schedule();
+});
+
+// ---- theme changes
+const retheme = () => { readTokens(); schedule(); };
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
+new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+readTokens(); classify(); renderLegend(); renderTable();
+new ResizeObserver(resize).observe(canvas);
+if (document.fonts) document.fonts.ready.then(schedule);
+})();
+</script>
