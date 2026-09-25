@@ -25,7 +25,9 @@ SYDNEY_TZ = ZoneInfo("Australia/Sydney")
 
 
 class ApiError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 def api_get(path: str, params: dict, api_key: str) -> dict:
@@ -39,7 +41,7 @@ def api_get(path: str, params: dict, api_key: str) -> dict:
             return json.load(response)
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
-        raise ApiError(f"{e.code} {e.reason} for {path}: {body}") from e
+        raise ApiError(f"{e.code} {e.reason} for {path}: {body}", status=e.code) from e
     except urllib.error.URLError as e:
         raise ApiError(f"Request to {path} failed: {e.reason}") from e
 

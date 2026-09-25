@@ -10,6 +10,7 @@ from main import plan_journey
 @dataclass
 class JourneySummary:
     depart_building_id: str
+    depart_building_address: str
     depart_latitude: float
     depart_longitude: float
     departure: datetime
@@ -51,6 +52,7 @@ def fastest_journey(
     origin = response["origin"]
     return JourneySummary(
         depart_building_id=origin["id"],
+        depart_building_address=origin["name"],
         depart_latitude=origin["latitude"],
         depart_longitude=origin["longitude"],
         departure=datetime.fromisoformat(journey["departure"]),

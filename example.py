@@ -17,7 +17,7 @@ journey = fastest_journey(
 if journey is None:
     print("No journey found")
 else:
-    print(f"From building:    {journey.depart_building_id} "
+    print(f"From building:    {journey.depart_building_id} {journey.depart_building_address} "
           f"({journey.depart_latitude}, {journey.depart_longitude})")
     print(f"Depart:           {journey.departure:%a %d %b %H:%M}")
     print(f"Arrive:           {journey.arrival:%a %d %b %H:%M}")
