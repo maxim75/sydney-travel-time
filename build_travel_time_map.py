@@ -1,28 +1,37 @@
-"""Build a self-contained HTML map of travel times to and from the QVB from --sample-hex results.
+"""Create travel time datasets and build the static map site from them.
 
-Reads the hexagon results written by get_sydney_building_travel_time.py --sample-hex, the
-Saturday night trips home written by get_qvb_night_travel_time.py (a second overlay, if
-present), and data/sydney_buildings.csv (to draw every built-up hexagon, including ones not
-yet processed, and to label suburbs), and writes one HTML file with the data embedded.
+With dataset parameters, creates (or resumes) the dataset for that building, date and
+time, collects its journeys for every sampled hexagon, merges the results into its
+dataset.json when complete, then rebuilds the site. Without them, only rebuilds the site.
+
+The site (default docs/, served by GitHub Pages) is index.html, with the hexagons, suburb
+labels, transit lines and the list of complete datasets embedded, plus one compact
+map_data/<id>.json per complete dataset that the page fetches when it is selected.
 
 Usage:
-    uv run build_travel_time_map.py [--results data/travel_times_hex9] [--output data/qvb_travel_map.html]
+    uv run build_travel_time_map.py
+    caffeinate -is uv run build_travel_time_map.py --building GANSW706029353 --date 2026-10-12 --arrive-by 09:00
+    caffeinate -is uv run build_travel_time_map.py --building GANSW706029353 --date 2026-10-10 --depart-at 21:00
 """
 
 import argparse
 import csv
 import json
+import os
 import statistics
+import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime, time
 from pathlib import Path
 
 import h3
 
+import datasets
+from datasets import Dataset
+
 TEMPLATE = Path(__file__).parent / "map_template.html"
 SCALE = 100_000  # coordinates are stored as integers in 1e-5 degrees (~1 m)
 STATUS_CODES = {"ok": 1, "no_journey": 2, "not_found": 3}
-QVB_LAT, QVB_LON = -33.87173827, 151.20669221  # GANSW706029353
 
 # Suburb labels: tier 1 shows at every zoom, tier 2 once zoomed in.
 LABELS = {
@@ -40,73 +49,69 @@ LABELS = {
 }
 
 
-def hhmm(value: str) -> str:
+def hhmm(value: str | None) -> str:
     return datetime.fromisoformat(value).strftime("%H:%M") if value else ""
 
 
-def when(value: datetime) -> str:
-    return value.strftime("%-H:%M on %a %-d %b %Y")
+def building_label(ds: Dataset) -> str:
+    b = ds.meta["building"]
+    return (b.get("name") or b["address"]).title()
 
 
-def load_results(results_dir: Path) -> dict[str, dict]:
-    """Latest result row per H3 cell."""
-    results: dict[str, dict] = {}
-    for path in sorted(results_dir.glob("travel_times_*.csv")):
-        with path.open(newline="") as f:
-            for row in csv.DictReader(f):
-                results[row["h3_cell"]] = row
-    return results
+def describe(ds: Dataset) -> dict:
+    """What the page needs to list a dataset and label it."""
+    b = ds.meta["building"]
+    verb = "arrive by" if ds.onward else "leave at"
+    return {
+        "id": ds.id,
+        "direction": "onward" if ds.onward else "return",
+        "when": ds.at.strftime("%-H:%M on %a %-d %b %Y"),
+        "label": f"{building_label(ds)} · {'to' if ds.onward else 'from'}, {verb} {ds.at:%-H:%M} · {ds.at:%a %-d %b %Y}",
+        "building": {"name": building_label(ds), "address": b["address"],
+                     "xy": [round(b["longitude"] * SCALE), round(b["latitude"] * SCALE)]},
+        "counts": ds.meta["counts"],
+        "finished": ds.meta["finished"],
+    }
 
 
-def overlay(cells: list[str], results: dict[str, dict], night: bool) -> dict:
-    """Column arrays for one overlay, in `cells` order. Column-oriented arrays keep the JSON small.
+def overlay(cells: list[str], ds: Dataset) -> dict:
+    """Column arrays for one dataset, in `cells` order. Column-oriented arrays keep the JSON small.
 
-    `minutes` is what the map colours by: the trip time for journeys to the QVB, and the
-    time from the requested departure to arrival (so including the wait) for night trips.
+    `minutes` is what the map colours by: the trip time for onward datasets, and the time
+    from the requested departure to arrival (so including the wait) for return datasets.
     """
+    night = not ds.onward
+    results = {r["h3_cell"]: r for r in ds.meta["results"]}
     names = ["status", "minutes", "trip", "wait", "morning", "walkMin", "walkM", "transports", "modes",
              "depart", "arrive", "address"]
     out: dict[str, list] = {name: [] for name in names}
     for cell in cells:
         row = results.get(cell)
         ok = row is not None and row["status"] == "ok"
-        num = (lambda key: int(row[key]) if ok and row.get(key) else None)
+        get = (lambda key, row=row, ok=ok: row.get(key) if ok else None)
         values = {
             "status": STATUS_CODES[row["status"]] if row else 0,
-            "minutes": num("total_minutes" if night else "journey_minutes"),
-            "trip": num("journey_minutes"),
-            "wait": num("wait_minutes") if night else None,
-            "morning": int(ok and row.get("next_morning") == "True"),
-            "walkMin": num("walking_minutes"), "walkM": num("walking_distance_m"), "transports": num("transports"),
+            "minutes": get("total_minutes" if night else "journey_minutes"),
+            "trip": get("journey_minutes"),
+            "wait": get("wait_minutes"),
+            "morning": int(bool(get("next_morning"))),
+            "walkMin": get("walking_minutes"), "walkM": get("walking_distance_m"), "transports": get("transports"),
             "modes": sum(bit for bit, key in ((1, "has_bus"), (2, "has_train"), (4, "has_ferry"), (8, "has_tram"))
-                         if ok and row[key] == "True"),
-            "depart": hhmm(row["departure"]) if ok else "",
-            "arrive": hhmm(row["arrival"]) if ok else "",
+                         if get(key)),
+            "depart": hhmm(get("departure")),
+            "arrive": hhmm(get("arrival")),
             "address": (row["address"] if night else row["depart_building_address"]) if row else "",
         }
         for name in names:
             out[name].append(values[name])
-    if not night:  # these only apply to night trips
+    if not night:  # these only apply to return trips
         for name in ("trip", "wait", "morning"):
             del out[name]
     out["computed"] = sum(1 for s in out["status"] if s)
-    return out
+    return {**describe(ds), **out}
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--buildings", type=Path, default=Path("data/sydney_buildings.csv"))
-    parser.add_argument("--results", type=Path, default=Path("data/travel_times_hex9"))
-    parser.add_argument("--night-results", type=Path, default=Path("data/night_from_qvb_hex9"),
-                        help="Output of get_qvb_night_travel_time.py (overlay skipped if missing)")
-    parser.add_argument("--output", type=Path, default=Path("data/qvb_travel_map.html"))
-    parser.add_argument("--transit", type=Path, default=Path("data/transit_lines.json"),
-                        help="Rail, light rail and ferry lines from get_transit_lines.py (skipped if missing)")
-    parser.add_argument("--resolution", type=int, default=9, help="H3 resolution used for --sample-hex (default: 9)")
-    parser.add_argument("--arrive-by", type=datetime.fromisoformat, default=datetime(2026, 10, 12, 9, 0),
-                        help="Arrival time the results were computed for (for the page subtitle)")
-    args = parser.parse_args()
-
+def build_site(args: argparse.Namespace) -> None:
     # Every built-up hexagon, with the suburb most of its buildings are in.
     cell_localities: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     locality_points: dict[str, list[tuple[float, float]]] = defaultdict(list)
@@ -133,13 +138,6 @@ def main() -> None:
         counts = cell_localities[cell]
         loc.append(locality_index[max(counts, key=counts.get)])
 
-    overlays = {"to": {**overlay(cells, load_results(args.results), night=False), "when": when(args.arrive_by)}}
-    if args.night_results.exists():
-        night = load_results(args.night_results)
-        requested = next((r["requested"] for r in night.values()), None)
-        if requested:
-            overlays["night"] = {**overlay(cells, night, night=True), "when": when(datetime.fromisoformat(requested))}
-
     labels = []
     for tier, names in LABELS.items():
         for name in names:
@@ -149,19 +147,71 @@ def main() -> None:
                 lon = statistics.median(p[1] for p in points)
                 labels.append([name.title(), round(lon * SCALE), round(lat * SCALE), tier])
 
+    # One compact file per complete dataset; files of datasets that no longer exist are removed.
+    map_dir = args.site / "map_data"
+    map_dir.mkdir(parents=True, exist_ok=True)
+    complete = [ds for ds in datasets.all_datasets() if ds.complete]
+    for ds in complete:
+        path = map_dir / f"{ds.id}.json"
+        path.write_text(json.dumps(overlay(cells, ds), separators=(",", ":"), ensure_ascii=False))
+        print(f"Wrote {path} ({path.stat().st_size / 1e6:.1f} MB)")
+    for path in map_dir.glob("*.json"):
+        if path.stem not in {ds.id for ds in complete}:
+            path.unlink()
+            print(f"Removed {path}")
+
     data = {
         "scale": SCALE,
         "total": len(cells),
-        "qvb": [round(QVB_LON * SCALE), round(QVB_LAT * SCALE)],
         "localities": [name.title() for name in localities],
-        "center": center, "verts": verts, "loc": loc, "labels": labels, "overlays": overlays,
+        "center": center, "verts": verts, "loc": loc, "labels": labels,
+        "datasets": sorted((describe(ds) for ds in complete), key=lambda d: d["label"]),
         "transit": json.loads(args.transit.read_text()) if args.transit.exists() else None,
     }
-    payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
-    args.output.write_text(TEMPLATE.read_text().replace("/*__DATA__*/null", payload))
-    done = ", ".join(f"{name} {o['computed']:,}" for name, o in overlays.items())
-    print(f"Wrote {args.output} ({args.output.stat().st_size / 1e6:.1f} MB): {len(cells):,} hexagons; computed: {done}")
+    payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")
+    index = args.site / "index.html"
+    index.write_text(TEMPLATE.read_text().replace("/*__DATA__*/null", payload))
+    (args.site / ".nojekyll").touch()
+    print(f"Wrote {index} ({index.stat().st_size / 1e6:.1f} MB): {len(cells):,} hexagons, {len(complete)} datasets")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    dataset = parser.add_argument_group("dataset (all of --building, --date and one of --arrive-by / --depart-at)")
+    dataset.add_argument("--building", help="G-NAF building ID (ADDRESS_DETAIL_PID), e.g. GANSW706029353 for the QVB")
+    dataset.add_argument("--date", type=date.fromisoformat, help="Travel date, YYYY-MM-DD")
+    times = dataset.add_mutually_exclusive_group()
+    times.add_argument("--arrive-by", type=time.fromisoformat, metavar="HH:MM",
+                       help="Onward: arrive at the building by this time (Sydney time)")
+    times.add_argument("--depart-at", type=time.fromisoformat, metavar="HH:MM",
+                       help="Return: leave the building at this time (Sydney time), waiting overnight if need be")
+    dataset.add_argument("--workers", type=int, default=3, help="Parallel requests (default: 3; the API slows beyond that)")
+    dataset.add_argument("--limit", type=int, help="Testing: process at most this many more buildings in this run")
+    parser.add_argument("--site", type=Path, default=Path("docs"), help="Output folder of the site (default: docs)")
+    parser.add_argument("--buildings", type=Path, default=Path("data/sydney_buildings.csv"))
+    parser.add_argument("--transit", type=Path, default=Path("data/transit_lines.json"),
+                        help="Rail, light rail and ferry lines from get_transit_lines.py (skipped if missing)")
+    parser.add_argument("--resolution", type=int, default=9, help="H3 resolution of the sample (default: 9)")
+    args = parser.parse_args()
+
+    failed = 0
+    given = [args.building, args.date, args.arrive_by or args.depart_at]
+    if any(given):
+        if not all(given):
+            parser.error("a dataset needs --building, --date and one of --arrive-by / --depart-at")
+        if "ADDRESS_INFO_API_KEY" not in os.environ:
+            parser.error("set ADDRESS_INFO_API_KEY in .env or the environment")
+        ds = datasets.create_or_load(args.building, args.date, args.arrive_by, args.depart_at)
+        if ds.complete:
+            datasets.log(f"{ds.id} is already complete")
+        else:
+            targets = datasets.sample_targets()
+            failed = datasets.collect(ds, targets, args.workers, args.limit)
+            datasets.merge(ds, {t.cell for t in targets})
+
+    build_site(args)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

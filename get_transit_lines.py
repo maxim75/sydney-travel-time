@@ -12,6 +12,7 @@ Usage:
 import argparse
 import csv
 import io
+import itertools
 import json
 import math
 import time
@@ -43,7 +44,7 @@ def in_bbox(lat: float, lon: float) -> bool:
 
 def densify(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
     out = points[:1]
-    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+    for (x0, y0), (x1, y1) in itertools.pairwise(points):
         n = max(1, math.ceil(math.hypot(x1 - x0, y1 - y0) / STEP_M))
         out += [(x0 + (x1 - x0) * t / n, y0 + (y1 - y0) * t / n) for t in range(1, n + 1)]
     return out

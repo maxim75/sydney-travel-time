@@ -61,18 +61,18 @@ def fastest_journey(
 def journey_stats(journey: dict) -> dict:
     """Times, walking and modes of one journey from the /v1/journeys response."""
     modes = {leg["mode"] for leg in journey["legs"]}
-    return dict(
-        departure=datetime.fromisoformat(journey["departure"]),
-        arrival=datetime.fromisoformat(journey["arrival"]),
-        journey_minutes=round(journey["duration_s"] / 60),
-        walking_minutes=round(journey["walk_time_s"] / 60),
-        walking_distance_m=round(sum(leg["distance_m"] for leg in journey["legs"] if leg["mode"] == "walk")),
-        transports=sum(leg["mode"] in TRANSIT_MODES for leg in journey["legs"]),
-        has_bus=bool(modes & {"bus", "coach"}),
-        has_train=bool(modes & {"train", "metro"}),
-        has_ferry="ferry" in modes,
-        has_tram="light_rail" in modes,
-    )
+    return {
+        "departure": datetime.fromisoformat(journey["departure"]),
+        "arrival": datetime.fromisoformat(journey["arrival"]),
+        "journey_minutes": round(journey["duration_s"] / 60),
+        "walking_minutes": round(journey["walk_time_s"] / 60),
+        "walking_distance_m": round(sum(leg["distance_m"] for leg in journey["legs"] if leg["mode"] == "walk")),
+        "transports": sum(leg["mode"] in TRANSIT_MODES for leg in journey["legs"]),
+        "has_bus": bool(modes & {"bus", "coach"}),
+        "has_train": bool(modes & {"train", "metro"}),
+        "has_ferry": "ferry" in modes,
+        "has_tram": "light_rail" in modes,
+    }
 
 
 SEARCH_STEP = timedelta(hours=2)  # the API only looks about 2.5 h ahead of depart_at

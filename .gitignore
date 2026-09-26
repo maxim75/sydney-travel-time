@@ -12,6 +12,9 @@ wheels/
 # Secrets
 .env
 
-# Downloaded and generated data
-data/
+# Downloaded and generated data, except the merged datasets
+data/*
+!data/datasets/
+data/datasets/*/*
+!data/datasets/*/dataset.json
 sydney_buildings.csv

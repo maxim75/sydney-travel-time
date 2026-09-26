@@ -1,5 +1,5 @@
 <meta charset="utf-8">
-<title>Commute to the QVB</title>
+<title>Sydney Travel Times</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
@@ -107,6 +107,12 @@ canvas.dragging { cursor: grabbing; }
 
 .suburbs { display: grid; gap: 10px; min-width: 0; }
 .suburbs .head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+.picker { flex-basis: 100%; }
+.picker label { font-family: var(--cond); font-weight: 600; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin-right: 4px; }
+.picker select { font: 500 14px var(--sans); color: var(--ink); background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; padding: 6px 10px; max-width: 100%; min-width: 0; }
+.pick-status { font-size: 13px; color: var(--ink-3); }
+.credits { margin-top: 8px; }
+.credits a { color: inherit; }
 .suburbs input { font: 14px var(--sans); color: var(--ink); background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; padding: 6px 10px; width: min(240px, 100%); }
 .tablebox { max-height: 420px; overflow: auto; border: 1px solid var(--hairline); border-radius: 10px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -131,18 +137,16 @@ td .sw { display: inline-block; vertical-align: -2px; margin-right: 6px; width: 
 <div class="wrap">
   <header>
     <p class="eyebrow" id="eyebrow">Greater Sydney · public transport · fastest trip</p>
-    <h1 id="title">How long does it take to get to the QVB?</h1>
+    <h1 id="title">Sydney travel times</h1>
     <p class="sub" id="sub"></p>
     <div class="stats" id="stats"></div>
   </header>
 
   <div class="controls">
-    <div class="group" role="group" aria-label="Journey" id="overlay-group">
-      <span>Journey</span>
-      <div class="seg" id="overlay">
-        <button type="button" data-v="to" aria-pressed="true">To the QVB · weekday 9:00</button>
-        <button type="button" data-v="night" aria-pressed="false">Home from the QVB · Saturday night</button>
-      </div>
+    <div class="group picker">
+      <label for="dataset">Dataset</label>
+      <select id="dataset"></select>
+      <span class="pick-status" id="pick-status" role="status"></span>
     </div>
     <div class="group" role="group" aria-label="Colour by">
       <span>Colour by</span>
@@ -209,14 +213,24 @@ td .sw { display: inline-block; vertical-align: -2px; margin-right: 6px; width: 
       <p class="note">Each hexagon is about 400 m across and shows one sample building near its centre. Select a suburb to zoom to it.</p>
     </section>
   </div>
+
+  <footer class="note credits">
+    Data: <a href="https://geoscape.com.au/data/g-naf/">G-NAF</a> © Geoscape Australia,
+    <a href="https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3">ABS mesh blocks</a>,
+    and <a href="https://opendata.transport.nsw.gov.au/">Transport for NSW</a> timetables (CC BY 4.0);
+    journeys from the <a href="https://address-info.d.imaxim.org/docs">Address Info API</a>.
+  </footer>
 </div>
 
 <script id="map-data" type="application/json">/*__DATA__*/null</script>
 <script>
 (() => {
 const D = JSON.parse(document.getElementById("map-data").textContent);
-// Per-journey arrays live in D.overlays: "to" (to the QVB) and, if computed, "night" (home from the QVB).
-let ov = "to", O = D.overlays.to;
+// The selected dataset (fetched from map_data/<id>.json): its building, direction and per-hexagon arrays.
+// Until one has loaded, an empty placeholder draws every hexagon as not computed.
+let O = { direction: "onward", building: null, when: "", status: new Array(D.total).fill(0), modes: [], minutes: [], computed: 0 };
+const isReturn = () => O.direction === "return";
+const place = () => O.building ? O.building.name : "the building";
 const N = D.total, S = D.scale;
 const COS = Math.cos(-33.87 * Math.PI / 180);
 const fmt = n => n.toLocaleString("en-AU");
@@ -285,9 +299,9 @@ const METRICS = {
     labels: ["Walk only", "1 ride", "2 rides", "3 rides", "4 rides", "5 or more"],
     short: ["Walk", "1", "2", "3", "4", "5+"] },
 };
-const NIGHT_TIME = { title: "Time to get there", value: i => O.minutes[i], key: "Minutes from leaving the QVB",
+const NIGHT_TIME = { title: "Time to get there", value: i => O.minutes[i], key: "Minutes from leaving, including the wait",
   ...bounded([30, 45, 60, 75, 90, 120, 150, 180, 240], "min", "Over 4 hours") };
-const metricOf = name => name === "time" && ov === "night" ? NIGHT_TIME : METRICS[name];
+const metricOf = name => name === "time" && isReturn() ? NIGHT_TIME : METRICS[name];
 const FILTERS = {
   all: () => true,
   train: i => (O.modes[i] & 2) > 0,
@@ -459,12 +473,14 @@ function drawLabels() {
       stations.push([name.replace(/ (Station|Wharf|Light Rail)$/, ""), x, y]);
     }
   }
-  // QVB marker first so labels avoid it
-  const qx = D.qvb[0] * COS * k + tx, qy = -D.qvb[1] * k + ty;
-  ctx.beginPath(); ctx.arc(qx, qy, 6, 0, Math.PI * 2);
-  ctx.fillStyle = T.ink; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = T.surface; ctx.stroke();
-  boxes.push([qx - 8, qy - 8, qx + 8, qy + 8]);
-  put("QVB", qx, qy - 17, "700 14px 'Barlow Condensed', 'Arial Narrow', sans-serif", T.ink, 3);
+  // the dataset's building first, so labels avoid it
+  if (O.building) {
+    const qx = O.building.xy[0] * COS * k + tx, qy = -O.building.xy[1] * k + ty;
+    ctx.beginPath(); ctx.arc(qx, qy, 6, 0, Math.PI * 2);
+    ctx.fillStyle = T.ink; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = T.surface; ctx.stroke();
+    boxes.push([qx - 8, qy - 8, qx + 8, qy + 8]);
+    put(O.building.name, qx, qy - 17, "700 14px 'Barlow Condensed', 'Arial Narrow', sans-serif", T.ink, 3);
+  }
   const showTier2 = k / kFit > 2.2;
   for (const [name, lx, ly, tier] of D.labels) {
     if (tier === 2 && !showTier2) continue;
@@ -479,7 +495,7 @@ const tip = document.getElementById("tip");
 const MODE_NAMES = [[1, "Bus"], [2, "Train / Metro"], [4, "Ferry"], [8, "Light rail"]];
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function showTip(i, sx, sy) {
-  const s = O.status[i], sub = esc(D.localities[D.loc[i]]), night = ov === "night";
+  const s = O.status[i], sub = esc(D.localities[D.loc[i]]), night = isReturn();
   let html;
   if (s === 1) {
     const modes = MODE_NAMES.filter(([b]) => O.modes[i] & b).map(([, n]) => `<b>${n}</b>`).join("");
@@ -488,13 +504,13 @@ function showTip(i, sx, sy) {
       ${night && O.morning[i] ? `<span class="muted">No service overnight: the first trip leaves in the morning.</span>` : ""}
       <div class="big">${mins(O.minutes[i])}</div>
       <dl><dt>Leave</dt><dd>${O.depart[i]} → arrive ${O.arrive[i]}</dd>
-      ${night ? `<dt>Wait</dt><dd>${mins(O.wait[i])} at the QVB</dd><dt>Trip</dt><dd>${mins(O.trip[i])}</dd>` : ""}
+      ${night ? `<dt>Wait</dt><dd>${mins(O.wait[i])} at ${esc(place())}</dd><dt>Trip</dt><dd>${mins(O.trip[i])}</dd>` : ""}
       <dt>Walking</dt><dd>${O.walkMin[i]} min · ${fmt(O.walkM[i])} m</dd>
       <dt>Rides</dt><dd>${O.transports[i]}</dd></dl>
       ${modes ? `<div class="modes">${modes}</div>` : ""}`;
   } else if (s === 2) {
     html = `<strong>${esc(O.address[i])}</strong><span class="muted">${night
-      ? "No public transport trip from the QVB before 10:00 the next morning."
+      ? `No public transport trip from ${esc(place())} before 10:00 the next morning.`
       : `No public transport journey found arriving by ${esc(O.when.split(" on ")[0])}.`}</span>`;
   } else if (s === 3) {
     html = `<strong>${esc(O.address[i])}</strong><span class="muted">The journey planner doesn't know this address or the nearby ones tried.</span>`;
@@ -569,20 +585,23 @@ document.getElementById("zreset").onclick = () => { fitAll(); tip.hidden = true;
 // ---- header, legend
 const median = a => a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : Math.round((a[a.length / 2 - 1] + a[a.length / 2]) / 2)) : null;
 function renderHeader() {
-  const night = ov === "night", ok = [];
+  const night = isReturn(), ok = [];
   for (let i = 0; i < N; i++) if (O.status[i] === 1 && !(night && O.morning[i])) ok.push(O.minutes[i]);
   ok.sort((a, b) => a - b);
   const noJourney = O.status.filter(s => s === 2).length;
   const morning = night ? O.morning.reduce((a, b) => a + b, 0) : 0;
   const pct = O.computed / N;
-  document.getElementById("eyebrow").textContent = night
-    ? "Greater Sydney · public transport · Saturday night" : "Greater Sydney · public transport · fastest trip";
-  document.getElementById("title").textContent = night
-    ? "How long does it take to get home from the QVB?" : "How long does it take to get to the QVB?";
-  document.getElementById("sub").textContent = night
-    ? `Earliest public transport trip from the Queen Victoria Building to each part of Greater Sydney, leaving at ${O.when}. ` +
-      `Times include waiting at the QVB for the first service; places with nothing until the morning are shown apart.`
-    : `Fastest public transport trip from each part of Greater Sydney to the Queen Victoria Building, arriving by ${O.when}. ` +
+  const b = O.building;
+  document.getElementById("eyebrow").textContent =
+    `Greater Sydney · public transport · ${night ? "earliest" : "fastest"} trip`;
+  document.getElementById("title").textContent = !b ? "Sydney travel times"
+    : night ? `How long does it take to get home from ${b.name}?` : `How long does it take to get to ${b.name}?`;
+  document.getElementById("sub").textContent = !b
+    ? (D.datasets.length ? "Loading the dataset…" : "No datasets have been built yet.")
+    : night
+    ? `Earliest public transport trip from ${b.name} (${b.address}) to each part of Greater Sydney, leaving at ${O.when}. ` +
+      `Times include waiting there for the first service; places with nothing until the morning are shown apart.`
+    : `Fastest public transport trip from each part of Greater Sydney to ${b.name} (${b.address}), arriving by ${O.when}. ` +
       `Each hexagon is coloured by one sample building near its centre.`;
   document.getElementById("stats").innerHTML = `
     <div class="stat"><b>${fmt(O.computed)} <span>of ${fmt(N)}</span></b><span>hexagons computed (${(pct * 100).toFixed(pct < 0.1 ? 1 : 0)}%)</span>
@@ -607,7 +626,7 @@ function renderLegend() {
   if (counts[13]) html += row({ bg: "var(--morning)" }, "Only next morning", counts[13], true);
   html += `<span class="sep"></span>`;
   if (filter === "all") {
-    html += row({ bg: "var(--nojourney)" }, ov === "night" ? "No trip by 10:00" : "No journey found", counts[1]);
+    html += row({ bg: "var(--nojourney)" }, isReturn() ? "No trip by 10:00" : "No journey found", counts[1]);
     if (counts[2]) html += row({ cls: "hatch" }, "Address not in planner", counts[2]);
     html += row({ bg: "var(--ghost)" }, "Not computed yet", N - O.computed);
   } else {
@@ -625,10 +644,10 @@ function renderKey() {
   const M = metricOf(metric);
   const line = (style, dash = "") => `<svg width="24" height="8" aria-hidden="true"><line x1="2" y1="4" x2="22" y2="4" stroke-linecap="round" style="${style}" ${dash}/></svg>`;
   const item = (mark, label) => `<span>${mark}${label}</span>`;
-  let extra = ov === "night" && metric === "time" && filter !== "tonight"
+  let extra = isReturn() && metric === "time" && filter !== "tonight"
     ? item(`<i class="sw" style="background:var(--morning)"></i>`, "Next morning") : "";
   extra += filter === "all"
-    ? item(`<i class="sw" style="background:var(--nojourney)"></i>`, ov === "night" ? "No trip by 10:00" : "No journey")
+    ? item(`<i class="sw" style="background:var(--nojourney)"></i>`, isReturn() ? "No trip by 10:00" : "No journey")
     : item(`<i class="sw" style="background:var(--ghost)"></i>`, "Other trips");
   if (showLines) extra +=
     item(line("stroke:var(--ink);stroke-width:2"), "Train / metro") +
@@ -705,16 +724,38 @@ document.getElementById("metric").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   metric = b.dataset.v; press("metric", metric); classify(); renderLegend(); invalidate();
 });
-document.getElementById("overlay").addEventListener("click", e => {
-  const b = e.target.closest("button"); if (!b || !D.overlays[b.dataset.v]) return;
-  ov = b.dataset.v; O = D.overlays[ov]; press("overlay", ov);
-  document.querySelectorAll("#filter [data-night]").forEach(c => c.hidden = ov !== "night");
-  document.getElementById("m-time").textContent = ov === "night" ? "Time to get there" : "Journey time";
-  if (ov !== "night" && (filter === "tonight" || filter === "morning")) { filter = "all"; press("filter", filter); }
+// ---- dataset picker: fetch map_data/<id>.json on selection, remember the choice per viewer
+const picker = document.getElementById("dataset"), pickStatus = document.getElementById("pick-status");
+const STORE_KEY = "sydney-travel-times:dataset";
+const remembered = () => { try { return localStorage.getItem(STORE_KEY); } catch { return null; } };
+const remember = id => { try { localStorage.setItem(STORE_KEY, id); } catch { /* storage unavailable */ } };
+const loaded = new Map();
+picker.innerHTML = D.datasets.map(d => `<option value="${esc(d.id)}">${esc(d.label)}</option>`).join("");
+picker.disabled = !D.datasets.length;
+let wanted = null;
+async function selectDataset(id) {
+  wanted = id; picker.value = id; pickStatus.textContent = "Loading…";
+  try {
+    if (!loaded.has(id)) {
+      const res = await fetch(`map_data/${encodeURIComponent(id)}.json`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      loaded.set(id, await res.json());
+    }
+    if (wanted !== id) return;  // another dataset was picked meanwhile
+    O = loaded.get(id); remember(id); pickStatus.textContent = "";
+    applyDataset();
+  } catch (err) {
+    if (wanted === id) pickStatus.textContent = `Couldn't load this dataset (${err.message}).`;
+  }
+}
+picker.addEventListener("change", () => selectDataset(picker.value));
+function applyDataset() {
+  document.querySelectorAll("#filter [data-night]").forEach(c => c.hidden = !isReturn());
+  document.getElementById("m-time").textContent = isReturn() ? "Time to get there" : "Journey time";
+  if (!isReturn() && (filter === "tonight" || filter === "morning")) { filter = "all"; press("filter", filter); }
   tip.hidden = true; pinned = false; hover = -1;
   classify(); renderHeader(); renderLegend(); computeSubs(); renderTable(); invalidate();
-});
-document.getElementById("overlay-group").hidden = !D.overlays.night;
+}
 document.querySelectorAll("#filter [data-night]").forEach(c => c.hidden = true);
 document.getElementById("filter").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
@@ -732,6 +773,10 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
 new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
 readTokens(); classify(); renderHeader(); renderLegend(); computeSubs(); renderTable();
+if (D.datasets.length) {
+  const saved = remembered();
+  selectDataset(D.datasets.some(d => d.id === saved) ? saved : D.datasets[0].id);
+}
 new ResizeObserver(resize).observe(canvas);
 if (document.fonts) document.fonts.ready.then(schedule);
 })();

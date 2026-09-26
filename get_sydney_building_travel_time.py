@@ -1,58 +1,29 @@
-"""Fastest public transport journey from every Greater Sydney building to the QVB.
+"""Batched, resumable, parallel journey collection (library used by datasets.py).
 
-Reads building IDs from data/sydney_buildings.csv (see get_sydney_buildings.py) and,
-for each, finds the fastest journey arriving at the Queen Victoria Building by 9:00
-on the first Monday of November 2026 (override with --arrive-by). Output files do
-not record the arrival time, so use a fresh --output-dir when changing it.
-
-Results go to numbered CSV files of --batch-size rows in --output-dir. After a file
-is written, its building IDs are appended to processed.log in the same directory,
-so a restarted run skips them. Buildings with no journey or unknown to the API are
-recorded too (status "no_journey" or "not_found"); buildings whose requests fail are
-not, so they are retried next run.
-
-With --sample-hex RES, buildings are grouped into H3 hexagons of that resolution and
-only one row is written per hexagon: the building nearest the hexagon's centre, or
-the next nearest (up to --hex-candidates) when it has no journey or is not found.
-
-Usage:
-    uv run get_sydney_building_travel_time.py --workers 8 [--limit 100] [--sample-hex 9]
+Results go to numbered CSV files of a fixed number of rows. After a file is written,
+its building IDs are appended to processed.log in the same directory, so a restarted
+run skips them. Buildings with no journey or unknown to the API are recorded too
+(status "no_journey" or "not_found"); buildings whose requests fail are not, so they
+are retried next run.
 """
 
-import argparse
 import csv
-import itertools
-import math
 import os
 import sys
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, fields
-from datetime import date, datetime, timedelta
-from functools import partial
+from datetime import datetime
 from pathlib import Path
-from typing import TypeVar
-
-import h3
 
 from fastest_journey import JourneySummary, fastest_journey
-from main import SYDNEY_TZ, ApiError
+from main import ApiError
 
-QVB = "GANSW706029353"  # 429-481 George Street, Sydney NSW 2000
 LOG_NAME = "processed.log"
 BATCH_PREFIX = "travel_times_"
 MAX_ATTEMPTS = 4
-T = TypeVar("T")
 COLUMNS = ["address_detail_pid", "status", "h3_cell", *(f.name for f in fields(JourneySummary))]
-
-
-def first_monday(year: int, month: int) -> date:
-    first = date(year, month, 1)
-    return first + timedelta(days=(7 - first.weekday()) % 7)
-
-
-ARRIVE_BY = datetime.combine(first_monday(2026, 11), datetime.min.time().replace(hour=9), SYDNEY_TZ)
 
 
 def log(message: str) -> None:
@@ -121,7 +92,7 @@ class BatchWriter:
         log(f"Wrote {path.name}: {self.written:,} rows this run ({rate:.1f}/s)")
 
 
-def with_retries(call: Callable[[], T]) -> T:
+def with_retries[T](call: Callable[[], T]) -> T:
     """Run an API call, retrying rate limits and server errors with exponential backoff."""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -133,12 +104,12 @@ def with_retries(call: Callable[[], T]) -> T:
     raise AssertionError("unreachable")
 
 
-def journey_row(pid: str, address: str, arrive_by: datetime) -> dict:
-    """Fastest journey from a building to the QVB."""
-    # Address from the input CSV, so rows without a journey still show it.
-    base = {"address_detail_pid": pid, "depart_building_address": address}
+def journey_row(cell: str, pid: str, address: str, anchor: str, arrive_by: datetime) -> dict:
+    """Fastest journey from a sampled building to the `anchor` building, arriving by `arrive_by`."""
+    # Address from the sample, so rows without a journey still show it.
+    base = {"address_detail_pid": pid, "h3_cell": cell, "depart_building_address": address}
     try:
-        journey = with_retries(lambda: fastest_journey(pid, QVB, arrive_by))
+        journey = with_retries(lambda: fastest_journey(pid, anchor, arrive_by))
     except ApiError as e:
         if e.status == 404:  # Address missing from the API's copy of G-NAF
             return {**base, "status": "not_found"}
@@ -146,47 +117,6 @@ def journey_row(pid: str, address: str, arrive_by: datetime) -> dict:
     if journey is None:
         return {**base, "status": "no_journey"}
     return {**base, "status": "ok", **asdict(journey)}
-
-
-def first_ok_row(candidates: list[tuple[str, str]], arrive_by: datetime, h3_cell: str) -> dict:
-    """Row for the first candidate building with a journey, or for the last one tried."""
-    for pid, address in candidates:
-        row = journey_row(pid, address, arrive_by)
-        if row["status"] == "ok":
-            break
-    return {**row, "h3_cell": h3_cell}
-
-
-Work = tuple[str, list[tuple[str, str]]]  # (h3 cell or "", candidate (pid, address) pairs)
-
-
-def pending_buildings(input_path: Path, processed: set[str]) -> Iterator[Work]:
-    with input_path.open(newline="") as f:
-        for row in csv.DictReader(f):
-            if row["address_detail_pid"] not in processed:
-                yield "", [(row["address_detail_pid"], row["address"])]
-
-
-def pending_hexes(input_path: Path, processed: set[str], resolution: int, max_candidates: int) -> Iterator[Work]:
-    """One work item per hexagon not yet done, with its buildings nearest the centre first."""
-    hexes: dict[str, list[tuple[str, str, float, float]]] = {}
-    with input_path.open(newline="") as f:
-        for row in csv.DictReader(f):
-            if row["latitude"]:
-                lat, lon = float(row["latitude"]), float(row["longitude"])
-                cell = h3.latlng_to_cell(lat, lon, resolution)
-                hexes.setdefault(cell, []).append((row["address_detail_pid"], row["address"], lat, lon))
-    done = sum(any(b[0] in processed for b in hexes[cell]) for cell in hexes)
-    log(f"{len(hexes):,} hexagons at resolution {resolution}, {done:,} already processed")
-
-    for cell in sorted(hexes):
-        buildings = hexes[cell]
-        if any(pid in processed for pid, *_ in buildings):
-            continue
-        c_lat, c_lon = h3.cell_to_latlng(cell)
-        scale = math.cos(math.radians(c_lat))
-        buildings.sort(key=lambda b: (b[2] - c_lat) ** 2 + ((b[3] - c_lon) * scale) ** 2)
-        yield cell, [(pid, address) for pid, address, *_ in buildings[:max_candidates]]
 
 
 def run_parallel(tasks: Iterable[tuple[str, Callable[[], dict]]], writer: BatchWriter, workers: int) -> int:
@@ -206,7 +136,7 @@ def run_parallel(tasks: Iterable[tuple[str, Callable[[], dict]]], writer: BatchW
             label = in_flight.pop(future)
             try:
                 writer.add(future.result())
-            except Exception as e:  # one bad task shouldn't stop a run of hours
+            except Exception as e:  # noqa: BLE001 - one bad task shouldn't stop a run of hours
                 failed += 1
                 log(f"Failed {label}: {e!r}")
 
@@ -224,47 +154,3 @@ def run_parallel(tasks: Iterable[tuple[str, Callable[[], dict]]], writer: BatchW
         writer.flush()
         executor.shutdown(wait=False, cancel_futures=True)
     return failed
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--input", type=Path, default=Path("data/sydney_buildings.csv"))
-    parser.add_argument("--output-dir", type=Path, default=Path("data/travel_times"))
-    parser.add_argument("--workers", type=int, default=8, help="Parallel requests (default: 8)")
-    parser.add_argument("--batch-size", type=int, default=1000, help="Rows per output CSV (default: 1000)")
-    parser.add_argument(
-        "--arrive-by", type=datetime.fromisoformat, default=ARRIVE_BY,
-        help=f"ISO date-time, Sydney local if no offset (default: {ARRIVE_BY:%Y-%m-%dT%H:%M})",
-    )
-    parser.add_argument("--limit", type=int, help="Process at most this many buildings (or hexagons) in this run")
-    parser.add_argument("--sample-hex", type=int, choices=range(0, 16), metavar="RES",
-                        help="Process one building per H3 hexagon of this resolution (e.g. 9)")
-    parser.add_argument("--hex-candidates", type=int, default=3,
-                        help="With --sample-hex, buildings to try per hexagon until one has a journey (default: 3)")
-    args = parser.parse_args()
-    if "ADDRESS_INFO_API_KEY" not in os.environ:
-        parser.error("set ADDRESS_INFO_API_KEY in .env or the environment")
-
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    processed = load_processed(args.output_dir)
-    log(f"Arrive by {args.arrive_by:%a %d %b %Y %H:%M}; {len(processed):,} buildings already processed")
-
-    if args.sample_hex is None:
-        work = pending_buildings(args.input, processed)
-    else:
-        work = pending_hexes(args.input, processed, args.sample_hex, args.hex_candidates)
-    if args.limit:
-        work = itertools.islice(work, args.limit)
-
-    writer = BatchWriter(args.output_dir, args.batch_size)
-    failed = run_parallel(
-        ((cell or candidates[0][0], partial(first_ok_row, candidates, args.arrive_by, cell)) for cell, candidates in work),
-        writer, args.workers,
-    )
-
-    log(f"Done: {writer.written:,} written, {failed:,} failed (will be retried on the next run)")
-    return 1 if failed else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
