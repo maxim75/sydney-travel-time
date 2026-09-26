@@ -1,7 +1,8 @@
 """Extract building IDs (G-NAF ADDRESS_DETAIL_PIDs) in Greater Sydney to a CSV.
 
 A "building" is a current, principal G-NAF address that is not a secondary
-address (unit, suite, shop...). Greater Sydney is the ABS Greater Capital City
+address (unit, suite, shop...), and whose G-NAF confidence is not -1 (not confirmed by any
+contributing dataset recently; the Address Info API leaves these out). Greater Sydney is the ABS Greater Capital City
 Statistical Area 1GSYD, matched through each address's 2021 mesh block.
 
 Needs the ABS mesh block allocation file MB_2021_AUST.xlsx; it is downloaded to
@@ -141,7 +142,8 @@ def main() -> int:
         writer.writerow(["address_detail_pid", "building_name", "address", "locality", "postcode", "latitude", "longitude", "mb_2021_code"])
         for d in gnaf.rows("ADDRESS_DETAIL"):
             pid = d["ADDRESS_DETAIL_PID"]
-            if pid not in address_mb or d["ALIAS_PRINCIPAL"] != "P" or d["PRIMARY_SECONDARY"] == "S":
+            if (pid not in address_mb or d["ALIAS_PRINCIPAL"] != "P" or d["PRIMARY_SECONDARY"] == "S"
+                    or d["CONFIDENCE"] == "-1"):
                 continue
             locality = localities.get(d["LOCALITY_PID"], "")
             lat, lon = coords.get(pid, ("", ""))

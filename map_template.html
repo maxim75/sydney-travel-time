@@ -14,7 +14,7 @@
   --ghost: #e8e7e1;
   --nojourney: #b3b1aa;
   --focus: #2a78d6;
-  --r0: #86b6ef; --r1: #5598e7; --r2: #2a78d6; --r3: #1c5cab; --r4: #104281; --r5: #0a2a52;
+  --r0: #f6d31a; --r1: #8ccb4e; --r2: #23a884; --r3: #23788f; --r4: #414487; --r5: #46085c;
   --sans: "Barlow", "Helvetica Neue", Arial, sans-serif;
   --cond: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
 }
@@ -23,14 +23,14 @@
     color-scheme: dark;
     --surface: #1a1a19; --panel: #232321; --ink: #ecebe6; --ink-2: #b4b3ad; --ink-3: #8a8983;
     --hairline: #363532; --ghost: #2b2b28; --nojourney: #5d5c56; --focus: #6da7ec;
-    --r0: #cde2fb; --r1: #9ec5f4; --r2: #6da7ec; --r3: #3987e5; --r4: #256abf; --r5: #184f95;
+    --r0: #fde725; --r1: #8fd744; --r2: #35b779; --r3: #21918c; --r4: #3f72b5; --r5: #7d52c0;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --surface: #1a1a19; --panel: #232321; --ink: #ecebe6; --ink-2: #b4b3ad; --ink-3: #8a8983;
   --hairline: #363532; --ghost: #2b2b28; --nojourney: #5d5c56; --focus: #6da7ec;
-  --r0: #cde2fb; --r1: #9ec5f4; --r2: #6da7ec; --r3: #3987e5; --r4: #256abf; --r5: #184f95;
+  --r0: #fde725; --r1: #8fd744; --r2: #35b779; --r3: #21918c; --r4: #3f72b5; --r5: #7d52c0;
 }
 
 body { background: var(--surface); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.45; }
@@ -65,6 +65,17 @@ canvas.dragging { cursor: grabbing; }
 .zoom { position: absolute; top: 12px; right: 12px; display: grid; gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
 .zoom button { width: 34px; height: 34px; border: 0; background: var(--surface); color: var(--ink); font: 600 18px var(--sans); cursor: pointer; }
 .zoom button.reset { font: 600 11px var(--cond); letter-spacing: .04em; text-transform: uppercase; }
+.key { position: absolute; left: 12px; bottom: 12px; display: grid; gap: 6px; padding: 8px 10px 9px; width: max-content; max-width: min(330px, calc(100% - 24px));
+  background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid var(--hairline); border-radius: 8px; font-size: 12px; pointer-events: none; }
+.key b { font: 600 12px var(--cond); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+.key .scale { display: grid; grid-template-columns: repeat(6, minmax(34px, 1fr)); column-gap: 2px; }
+.key .scale i { display: block; height: 10px; }
+.key .scale i:first-child { border-radius: 3px 0 0 3px; } .key .scale i:last-child { border-radius: 0 3px 3px 0; }
+.key .scale span { color: var(--ink-2); text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; padding-top: 2px; }
+.key .extra { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--ink-3); }
+.key .extra span { display: inline-flex; align-items: center; gap: 5px; }
+.key .extra .sw { width: 10px; height: 10px; border-radius: 2px; }
+.key svg { display: block; }
 .hint { position: absolute; left: 12px; top: 12px; font-size: 12px; color: var(--ink-3); background: color-mix(in srgb, var(--surface) 85%, transparent); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
 
 .tip { position: absolute; z-index: 2; pointer-events: none; width: max-content; max-width: min(300px, calc(100% - 24px)); background: var(--surface); color: var(--ink); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / .14); padding: 10px 12px; display: grid; gap: 6px; font-size: 13px; }
@@ -138,6 +149,10 @@ td .sw { display: inline-block; vertical-align: -2px; margin-right: 6px; width: 
         <button type="button" class="chip" id="f-tram" data-v="tram" aria-pressed="false">Using light rail</button>
       </div>
     </div>
+    <div class="group" role="group" aria-label="Base map">
+      <span>Base map</span>
+      <button type="button" class="chip" id="lines" aria-pressed="true">Rail &amp; ferry lines</button>
+    </div>
   </div>
 
   <div class="mapbox" id="mapbox">
@@ -148,6 +163,7 @@ td .sw { display: inline-block; vertical-align: -2px; margin-right: 6px; width: 
       <button type="button" id="zout" aria-label="Zoom out">−</button>
       <button type="button" id="zreset" class="reset" aria-label="Show all of Sydney">All</button>
     </div>
+    <div class="key" id="key" aria-hidden="true"></div>
     <div class="tip" id="tip" hidden></div>
   </div>
 
@@ -220,17 +236,32 @@ function cellAt(X, Y) {
   return best;
 }
 
+// ---- base map: rail, light rail and ferry lines as world-space paths, built once
+const TR = D.transit, linePaths = {};
+if (TR) for (const [layer, lines] of Object.entries(TR.lines)) {
+  const p = new Path2D();
+  for (const l of lines) for (let j = 0; j < l.length; j += 2) {
+    const x = l[j] * COS, y = -l[j + 1];
+    j ? p.lineTo(x, y) : p.moveTo(x, y);
+  }
+  linePaths[layer] = p;
+}
+let showLines = !!TR;
+
 // ---- metrics and filters
 const METRICS = {
   time: { title: "Journey time", value: i => D.minutes[i],
     band: v => v <= 30 ? 0 : v <= 45 ? 1 : v <= 60 ? 2 : v <= 90 ? 3 : v <= 120 ? 4 : 5,
-    labels: ["30 min or less", "31–45 min", "46–60 min", "61–90 min", "91–120 min", "Over 2 hours"] },
+    labels: ["30 min or less", "31–45 min", "46–60 min", "61–90 min", "91–120 min", "Over 2 hours"],
+    key: "Journey time, minutes", short: ["≤30", "31–45", "46–60", "61–90", "91–120", "120+"] },
   walk: { title: "Walking time", value: i => D.walkMin[i],
     band: v => v <= 5 ? 0 : v <= 10 ? 1 : v <= 15 ? 2 : v <= 20 ? 3 : v <= 30 ? 4 : 5,
-    labels: ["5 min or less", "6–10 min", "11–15 min", "16–20 min", "21–30 min", "Over 30 min"] },
+    labels: ["5 min or less", "6–10 min", "11–15 min", "16–20 min", "21–30 min", "Over 30 min"],
+    key: "Walking time, minutes", short: ["≤5", "6–10", "11–15", "16–20", "21–30", "30+"] },
   rides: { title: "Rides taken", value: i => D.transports[i],
     band: v => Math.min(v, 5),
-    labels: ["Walk only", "1 ride", "2 rides", "3 rides", "4 rides", "5 or more"] },
+    labels: ["Walk only", "1 ride", "2 rides", "3 rides", "4 rides", "5 or more"],
+    key: "Rides taken", short: ["Walk", "1", "2", "3", "4", "5+"] },
 };
 const FILTERS = {
   all: () => true,
@@ -258,7 +289,7 @@ let T = {};
 function readTokens() {
   const cs = getComputedStyle(document.documentElement);
   const g = n => cs.getPropertyValue(n).trim();
-  T = { surface: g("--surface"), ink: g("--ink"), ink3: g("--ink-3"), ghost: g("--ghost"), nojourney: g("--nojourney"),
+  T = { surface: g("--surface"), ink: g("--ink"), ink2: g("--ink-2"), ink3: g("--ink-3"), ghost: g("--ghost"), nojourney: g("--nojourney"),
         ramp: [0, 1, 2, 3, 4, 5].map(k => g("--r" + k)) };
   const c = document.createElement("canvas"); c.width = c.height = 6;
   const x = c.getContext("2d");
@@ -279,7 +310,7 @@ function fit(x0, y0, x1, y1, pad = 0.92) {
 function fitAll() { fit(minX - R, minY - R, maxX + R, maxY + R); kFit = k; }
 function zoomAt(f, sx, sy) {
   const nk = Math.min(Math.max(k * f, kFit * 0.7), kFit * 80);
-  tx = sx - (sx - tx) * nk / k; ty = sy - (sy - ty) * nk / k; k = nk; schedule();
+  tx = sx - (sx - tx) * nk / k; ty = sy - (sy - ty) * nk / k; k = nk; interact(); schedule();
 }
 function resize() {
   const r = canvas.getBoundingClientRect();
@@ -288,33 +319,81 @@ function resize() {
   W = r.width; H = r.height; dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
   if (first) fitAll(); else { tx += W / 2 - ox; ty += H / 2 - oy; }
-  schedule();
+  invalidate();
 }
 
 let queued = false;
 function schedule() { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } }
 
-function draw() {
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = T.surface; ctx.fillRect(0, 0, W, H);
+// Hexagons are drawn into an offscreen layer (with a margin around the view) only when the
+// view settles or the colours change. While panning, zooming or hovering, the last layer is
+// just moved and scaled, so frames cost one image copy instead of 32k polygons.
+const layer = document.createElement("canvas"), lctx = layer.getContext("2d");
+let lk = 0, ltx = 0, lty = 0, MG = 0, dirty = true, moving = false, settle = 0;
+function invalidate() { dirty = true; schedule(); }
+function interact() {
+  moving = true; clearTimeout(settle);
+  settle = setTimeout(() => { moving = false; schedule(); }, 150);
+}
+
+function renderLayer() {
+  MG = Math.round(Math.max(W, H) * 0.25);
+  const LW = W + 2 * MG, LH = H + 2 * MG, ox = tx + MG, oy = ty + MG;
+  if (layer.width !== Math.round(LW * dpr) || layer.height !== Math.round(LH * dpr)) {
+    layer.width = Math.round(LW * dpr); layer.height = Math.round(LH * dpr);
+  }
+  lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  lctx.fillStyle = T.surface; lctx.fillRect(0, 0, LW, LH);
   const paths = Array.from({ length: 9 }, () => new Path2D());
   const m = R * k;
   for (let i = 0; i < N; i++) {
-    const sx = cx[i] * k + tx, sy = cy[i] * k + ty;
-    if (sx < -m || sy < -m || sx > W + m || sy > H + m) continue;
+    const sx = cx[i] * k + ox, sy = cy[i] * k + oy;
+    if (sx < -m || sy < -m || sx > LW + m || sy > LH + m) continue;
     const p = paths[cls[i]];
     for (let j = start[i]; j < start[i + 1]; j++) {
-      const x = P[2 * j] * k + tx, y = P[2 * j + 1] * k + ty;
+      const x = P[2 * j] * k + ox, y = P[2 * j + 1] * k + oy;
       j === start[i] ? p.moveTo(x, y) : p.lineTo(x, y);
     }
     p.closePath();
   }
   const fills = [T.ghost, T.nojourney, T.hatch, ...T.ramp];
-  paths.forEach((p, c) => { ctx.fillStyle = fills[c]; ctx.fill(p); });
+  paths.forEach((p, c) => { lctx.fillStyle = fills[c]; lctx.fill(p); });
   if (m > 7) {  // surface gap between hexagons once they are big enough to see
-    ctx.strokeStyle = T.surface; ctx.lineWidth = Math.min(2, m / 10);
-    paths.forEach(p => ctx.stroke(p));
+    lctx.strokeStyle = T.surface; lctx.lineWidth = Math.min(2, m / 10);
+    paths.forEach(p => lctx.stroke(p));
   }
+  if (showLines) drawLines(ox, oy);
+  lk = k; ltx = tx; lty = ty; dirty = false;
+}
+
+function drawLines(ox, oy) {
+  // paths are in world units, so draw them through the view transform and scale widths back to pixels
+  lctx.save();
+  lctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * ox, dpr * oy);
+  lctx.lineJoin = lctx.lineCap = "round";
+  const z = Math.min(1.5, Math.max(0.7, Math.sqrt(k / kFit) * 0.55));  // thinner when zoomed out
+  const stroke = (p, width, color, dash) => {
+    if (!p) return;
+    lctx.lineWidth = width * z / k; lctx.strokeStyle = color;
+    lctx.setLineDash(dash ? dash.map(d => d * z / k) : []); lctx.stroke(p);
+  };
+  stroke(linePaths.ferry, 1.3, T.ink2, [4, 3]);
+  stroke(linePaths.light_rail, 3.2, T.surface); stroke(linePaths.light_rail, 1.2, T.ink);
+  stroke(linePaths.rail, 4, T.surface); stroke(linePaths.rail, 1.8, T.ink);
+  lctx.restore();
+}
+
+function draw() {
+  if (!W || !H) return;  // not laid out yet
+  if (dirty || (!moving && (lk !== k || ltx !== tx || lty !== ty))) renderLayer();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = T.surface; ctx.fillRect(0, 0, W, H);
+  // layer point p (CSS px, minus margin) is world (p - ltx) / lk; on screen it is at s * p + tx - ltx * s
+  const s = k / lk;
+  ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * (tx - ltx * s), dpr * (ty - lty * s));
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(layer, -MG, -MG, layer.width / dpr, layer.height / dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (hover >= 0) {
     ctx.beginPath();
     for (let j = start[hover]; j < start[hover + 1]; j++) {
@@ -341,6 +420,17 @@ function drawLabels() {
     ctx.lineWidth = weight * 2; ctx.strokeStyle = T.surface; ctx.strokeText(text, x, y);
     ctx.fillStyle = color; ctx.fillText(text, x, y);
   };
+  const zoom = k / kFit, stations = [];
+  if (showLines && TR && zoom > 3) {
+    for (const [name, lx, ly, layer] of TR.stations) {
+      if (layer !== "rail" && zoom < 6) continue;
+      const x = lx * COS * k + tx, y = -ly * k + ty;
+      if (x < -10 || y < -10 || x > W + 10 || y > H + 10) continue;
+      ctx.beginPath(); ctx.arc(x, y, layer === "rail" ? 3.5 : 2.6, 0, Math.PI * 2);
+      ctx.fillStyle = T.surface; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = T.ink; ctx.stroke();
+      stations.push([name.replace(/ (Station|Wharf|Light Rail)$/, ""), x, y]);
+    }
+  }
   // QVB marker first so labels avoid it
   const qx = D.qvb[0] * COS * k + tx, qy = -D.qvb[1] * k + ty;
   ctx.beginPath(); ctx.arc(qx, qy, 6, 0, Math.PI * 2);
@@ -353,6 +443,7 @@ function drawLabels() {
     put(name, lx * COS * k + tx, -ly * k + ty,
         (tier === 1 ? "600 13px" : "500 12px") + " 'Barlow Condensed', 'Arial Narrow', sans-serif", T.ink, 2);
   }
+  if (zoom > 9) for (const [name, x, y] of stations) put(name, x, y - 12, "500 11px 'Barlow', sans-serif", T.ink2, 2);
 }
 
 // ---- tooltip
@@ -410,7 +501,7 @@ canvas.addEventListener("pointermove", e => {
   if (ptrs.size === 1) {
     tx += x - px; ty += y - py; moved += Math.abs(x - px) + Math.abs(y - py);
     if (moved > 4) { canvas.classList.add("dragging"); tip.hidden = true; pinned = false; }
-    schedule();
+    interact(); schedule();
   } else if (ptrs.size === 2) {
     const [a, b] = [...ptrs.values()];
     const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -481,6 +572,26 @@ function renderLegend() {
   document.getElementById("legend-note").textContent = D.computed < D.total
     ? "Results are still being computed; grey areas fill in as the run continues."
     : "Bars show how many hexagons fall in each band.";
+  renderKey();
+}
+
+// ---- on-map key: colour scale for the current metric, plus the other fills and base map lines
+function renderKey() {
+  const M = METRICS[metric];
+  const line = (style, dash = "") => `<svg width="24" height="8" aria-hidden="true"><line x1="2" y1="4" x2="22" y2="4" stroke-linecap="round" style="${style}" ${dash}/></svg>`;
+  const item = (mark, label) => `<span>${mark}${label}</span>`;
+  let extra = filter === "all"
+    ? item(`<i class="sw" style="background:var(--nojourney)"></i>`, "No journey") +
+      item(`<i class="sw hatch"></i>`, "Not in planner")
+    : item(`<i class="sw" style="background:var(--ghost)"></i>`, "Other trips");
+  if (showLines) extra +=
+    item(line("stroke:var(--ink);stroke-width:2"), "Train / metro") +
+    item(line("stroke:var(--ink);stroke-width:1.2"), "Light rail") +
+    item(line("stroke:var(--ink-2);stroke-width:1.3", 'stroke-dasharray="4 3"'), "Ferry");
+  document.getElementById("key").innerHTML = `<b>${M.key}</b>
+    <div class="scale">${M.short.map((_, b) => `<i style="background:var(--r${b})"></i>`).join("")}
+      ${M.short.map(l => `<span>${l}</span>`).join("")}</div>
+    <div class="extra">${extra}</div>`;
 }
 
 // ---- suburb table
@@ -540,15 +651,20 @@ function press(groupId, v) {
 }
 document.getElementById("metric").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
-  metric = b.dataset.v; press("metric", metric); classify(); renderLegend(); schedule();
+  metric = b.dataset.v; press("metric", metric); classify(); renderLegend(); invalidate();
 });
 document.getElementById("filter").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
-  filter = b.dataset.v; press("filter", filter); classify(); renderLegend(); schedule();
+  filter = b.dataset.v; press("filter", filter); classify(); renderLegend(); invalidate();
 });
 
 // ---- theme changes
-const retheme = () => { readTokens(); schedule(); };
+const linesBtn = document.getElementById("lines");
+linesBtn.parentElement.hidden = !TR;
+linesBtn.onclick = () => {
+  showLines = !showLines; linesBtn.setAttribute("aria-pressed", showLines); renderKey(); invalidate();
+};
+const retheme = () => { readTokens(); invalidate(); };
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
 new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 

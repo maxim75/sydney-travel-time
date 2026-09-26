@@ -48,6 +48,8 @@ def main() -> None:
     parser.add_argument("--buildings", type=Path, default=Path("data/sydney_buildings.csv"))
     parser.add_argument("--results", type=Path, default=Path("data/travel_times_hex9"))
     parser.add_argument("--output", type=Path, default=Path("data/qvb_travel_map.html"))
+    parser.add_argument("--transit", type=Path, default=Path("data/transit_lines.json"),
+                        help="Rail, light rail and ferry lines from get_transit_lines.py (skipped if missing)")
     parser.add_argument("--resolution", type=int, default=9, help="H3 resolution used for --sample-hex (default: 9)")
     parser.add_argument("--arrive-by", type=datetime.fromisoformat, default=datetime(2026, 10, 12, 9, 0),
                         help="Arrival time the results were computed for (for the page subtitle)")
@@ -125,6 +127,7 @@ def main() -> None:
         "center": center, "verts": verts, "loc": loc, "status": status, "minutes": minutes,
         "walkMin": walk_min, "walkM": walk_m, "transports": transports, "modes": modes,
         "depart": depart, "arrive": arrive, "address": address, "labels": labels,
+        "transit": json.loads(args.transit.read_text()) if args.transit.exists() else None,
     }
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     args.output.write_text(TEMPLATE.read_text().replace("/*__DATA__*/null", payload))
