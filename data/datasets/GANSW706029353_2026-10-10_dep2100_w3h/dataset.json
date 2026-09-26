@@ -1,0 +1,14 @@
+{
+  "id": "GANSW706029353_2026-10-10_dep2100_w3h",
+  "building": {
+    "id": "GANSW706029353",
+    "name": "QUEEN VICTORIA BUILDING",
+    "address": "429-481 GEORGE STREET, SYDNEY NSW 2000",
+    "latitude": -33.87173827,
+    "longitude": 151.20669221
+  },
+  "date": "2026-10-10",
+  "depart_at": "21:00",
+  "max_wait_hours": 3,
+  "created": "2026-09-26T20:09:57+10:00"
+}

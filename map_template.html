@@ -231,6 +231,8 @@ const D = JSON.parse(document.getElementById("map-data").textContent);
 let O = { direction: "onward", building: null, when: "", status: new Array(D.total).fill(0), modes: [], minutes: [], computed: 0 };
 const isReturn = () => O.direction === "return";
 const place = () => O.building ? O.building.name : "the building";
+const noTrip = () => `No trip within ${O.maxWaitHours} h`;  // return datasets only wait this long for a departure
+const hasMorning = () => isReturn() && O.morning.some(Boolean);
 const N = D.total, S = D.scale;
 const COS = Math.cos(-33.87 * Math.PI / 180);
 const fmt = n => n.toLocaleString("en-AU");
@@ -510,7 +512,7 @@ function showTip(i, sx, sy) {
       ${modes ? `<div class="modes">${modes}</div>` : ""}`;
   } else if (s === 2) {
     html = `<strong>${esc(O.address[i])}</strong><span class="muted">${night
-      ? `No public transport trip from ${esc(place())} before 10:00 the next morning.`
+      ? `No public transport departure from ${esc(place())} within ${O.maxWaitHours} hours of ${esc(O.when.split(" on ")[0])}.`
       : `No public transport journey found arriving by ${esc(O.when.split(" on ")[0])}.`}</span>`;
   } else if (s === 3) {
     html = `<strong>${esc(O.address[i])}</strong><span class="muted">The journey planner doesn't know this address or the nearby ones tried.</span>`;
@@ -600,16 +602,16 @@ function renderHeader() {
     ? (D.datasets.length ? "Loading the dataset…" : "No datasets have been built yet.")
     : night
     ? `Earliest public transport trip from ${b.name} (${b.address}) to each part of Greater Sydney, leaving at ${O.when}. ` +
-      `Times include waiting there for the first service; places with nothing until the morning are shown apart.`
+      `Times include waiting there for the first service, up to ${O.maxWaitHours} hours; places with no departure in that time count as no trip.`
     : `Fastest public transport trip from each part of Greater Sydney to ${b.name} (${b.address}), arriving by ${O.when}. ` +
       `Each hexagon is coloured by one sample building near its centre.`;
   document.getElementById("stats").innerHTML = `
     <div class="stat"><b>${fmt(O.computed)} <span>of ${fmt(N)}</span></b><span>hexagons computed (${(pct * 100).toFixed(pct < 0.1 ? 1 : 0)}%)</span>
       <div class="progress" aria-hidden="true"><i style="width:${(pct * 100).toFixed(2)}%"></i></div></div>
-    <div class="stat"><b>${ok.length ? median(ok) + " min" : "–"}</b><span>${night ? "median time tonight" : "median trip"}</span></div>
+    <div class="stat"><b>${ok.length ? median(ok) + " min" : "–"}</b><span>${night ? "median time" : "median trip"}</span></div>
     <div class="stat"><b>${ok.length ? ok[0] + " min" : "–"}</b><span>fastest</span></div>
-    ${night ? `<div class="stat"><b>${fmt(morning)}</b><span>only reachable next morning</span></div>` : ""}
-    <div class="stat"><b>${fmt(noJourney)}</b><span>${night ? "with no trip by 10:00" : "with no journey found"}</span></div>`;
+    ${morning ? `<div class="stat"><b>${fmt(morning)}</b><span>only reachable next morning</span></div>` : ""}
+    <div class="stat"><b>${fmt(noJourney)}</b><span>${night ? `with no trip within ${O.maxWaitHours} h` : "with no journey found"}</span></div>`;
   document.getElementById("median-head").textContent = night ? "Median time" : "Median trip";
 }
 
@@ -626,7 +628,7 @@ function renderLegend() {
   if (counts[13]) html += row({ bg: "var(--morning)" }, "Only next morning", counts[13], true);
   html += `<span class="sep"></span>`;
   if (filter === "all") {
-    html += row({ bg: "var(--nojourney)" }, isReturn() ? "No trip by 10:00" : "No journey found", counts[1]);
+    html += row({ bg: "var(--nojourney)" }, isReturn() ? noTrip() : "No journey found", counts[1]);
     if (counts[2]) html += row({ cls: "hatch" }, "Address not in planner", counts[2]);
     html += row({ bg: "var(--ghost)" }, "Not computed yet", N - O.computed);
   } else {
@@ -644,10 +646,10 @@ function renderKey() {
   const M = metricOf(metric);
   const line = (style, dash = "") => `<svg width="24" height="8" aria-hidden="true"><line x1="2" y1="4" x2="22" y2="4" stroke-linecap="round" style="${style}" ${dash}/></svg>`;
   const item = (mark, label) => `<span>${mark}${label}</span>`;
-  let extra = isReturn() && metric === "time" && filter !== "tonight"
+  let extra = hasMorning() && metric === "time" && filter !== "tonight"
     ? item(`<i class="sw" style="background:var(--morning)"></i>`, "Next morning") : "";
   extra += filter === "all"
-    ? item(`<i class="sw" style="background:var(--nojourney)"></i>`, isReturn() ? "No trip by 10:00" : "No journey")
+    ? item(`<i class="sw" style="background:var(--nojourney)"></i>`, isReturn() ? noTrip() : "No journey")
     : item(`<i class="sw" style="background:var(--ghost)"></i>`, "Other trips");
   if (showLines) extra +=
     item(line("stroke:var(--ink);stroke-width:2"), "Train / metro") +
@@ -750,9 +752,9 @@ async function selectDataset(id) {
 }
 picker.addEventListener("change", () => selectDataset(picker.value));
 function applyDataset() {
-  document.querySelectorAll("#filter [data-night]").forEach(c => c.hidden = !isReturn());
+  document.querySelectorAll("#filter [data-night]").forEach(c => c.hidden = !hasMorning());
   document.getElementById("m-time").textContent = isReturn() ? "Time to get there" : "Journey time";
-  if (!isReturn() && (filter === "tonight" || filter === "morning")) { filter = "all"; press("filter", filter); }
+  if (!hasMorning() && (filter === "tonight" || filter === "morning")) { filter = "all"; press("filter", filter); }
   tip.hidden = true; pinned = false; hover = -1;
   classify(); renderHeader(); renderLegend(); computeSubs(); renderTable(); invalidate();
 }

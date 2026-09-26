@@ -1,4 +1,4 @@
-"""Earliest trips leaving a building at night, waiting overnight if need be (library used by datasets.py).
+"""Earliest trips leaving a building at a time, waiting up to a limit (library used by datasets.py).
 
 Each row records the wait at the departure building, the trip itself, and the total time
 from the requested departure to arrival.
@@ -6,7 +6,7 @@ from the requested departure to arrival.
 
 from datetime import datetime, time, timedelta
 
-from fastest_journey import SEARCH_STEP, earliest_journey
+from fastest_journey import earliest_journey
 from get_sydney_building_travel_time import with_retries
 from main import SYDNEY_TZ, ApiError
 
@@ -29,25 +29,14 @@ def next_morning_after(depart_at: datetime, at: time) -> datetime:
     return datetime.combine(day, at, SYDNEY_TZ)
 
 
-def night_row(cell: str, pid: str, address: str, reachable: bool, anchor: str, depart_at: datetime,
-              until: datetime) -> dict:
-    """Earliest trip from the `anchor` building to a sampled building, leaving at or after `depart_at`.
+def night_row(cell: str, pid: str, address: str, anchor: str, depart_at: datetime, until: datetime) -> dict:
+    """Earliest trip from the `anchor` building to a sampled building, leaving between `depart_at` and `until`.
 
-    If nothing runs, the search moves forward until `until`, so places only reachable by a
-    morning service are included (next_morning). A building with no weekday journey in the
-    sample (`reachable` false) first gets a single search two hours before `until`, and the
-    full overnight search only if that finds something; unreachable searches are slow.
+    A place with no departure by `until` is recorded as no_journey.
     """
     base = {"address_detail_pid": pid, "h3_cell": cell, "address": address, "requested": depart_at.isoformat()}
     try:
-        searches = 0
-        if not reachable:
-            probe = until - SEARCH_STEP
-            stats, searches = with_retries(lambda: earliest_journey(anchor, pid, probe, probe))
-            if stats is None:
-                return {**base, "status": "no_journey", "searches": searches}
-        stats, more = with_retries(lambda: earliest_journey(anchor, pid, depart_at, until))
-        searches += more
+        stats, searches = with_retries(lambda: earliest_journey(anchor, pid, depart_at, until))
     except ApiError as e:
         if e.status == 404:
             return {**base, "status": "not_found"}

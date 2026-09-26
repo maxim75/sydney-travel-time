@@ -11,7 +11,7 @@ map_data/<id>.json per complete dataset that the page fetches when it is selecte
 Usage:
     uv run build_travel_time_map.py
     caffeinate -is uv run build_travel_time_map.py --building GANSW706029353 --date 2026-10-12 --arrive-by 09:00
-    caffeinate -is uv run build_travel_time_map.py --building GANSW706029353 --date 2026-10-10 --depart-at 21:00
+    caffeinate -is uv run build_travel_time_map.py --building GANSW706029353 --date 2026-10-10 --depart-at 21:00 [--max-wait-hours 3]
 """
 
 import argparse
@@ -66,7 +66,9 @@ def describe(ds: Dataset) -> dict:
         "id": ds.id,
         "direction": "onward" if ds.onward else "return",
         "when": ds.at.strftime("%-H:%M on %a %-d %b %Y"),
-        "label": f"{building_label(ds)} · {'to' if ds.onward else 'from'}, {verb} {ds.at:%-H:%M} · {ds.at:%a %-d %b %Y}",
+        "label": f"{building_label(ds)} · {'to' if ds.onward else 'from'}, {verb} {ds.at:%-H:%M}"
+                 + ("" if ds.onward else f" (wait up to {ds.meta['max_wait_hours']} h)") + f" · {ds.at:%a %-d %b %Y}",
+        "maxWaitHours": ds.meta.get("max_wait_hours"),
         "building": {"name": building_label(ds), "address": b["address"],
                      "xy": [round(b["longitude"] * SCALE), round(b["latitude"] * SCALE)]},
         "counts": ds.meta["counts"],
@@ -184,7 +186,9 @@ def main() -> int:
     times.add_argument("--arrive-by", type=time.fromisoformat, metavar="HH:MM",
                        help="Onward: arrive at the building by this time (Sydney time)")
     times.add_argument("--depart-at", type=time.fromisoformat, metavar="HH:MM",
-                       help="Return: leave the building at this time (Sydney time), waiting overnight if need be")
+                       help="Return: leave the building at this time (Sydney time)")
+    dataset.add_argument("--max-wait-hours", type=int,
+                         help="Return: places with no departure within this many hours count as no journey (default: 3)")
     dataset.add_argument("--workers", type=int, default=3, help="Parallel requests (default: 3; the API slows beyond that)")
     dataset.add_argument("--limit", type=int, help="Testing: process at most this many more buildings in this run")
     parser.add_argument("--site", type=Path, default=Path("docs"), help="Output folder of the site (default: docs)")
@@ -199,9 +203,13 @@ def main() -> int:
     if any(given):
         if not all(given):
             parser.error("a dataset needs --building, --date and one of --arrive-by / --depart-at")
+        if args.arrive_by and args.max_wait_hours is not None:
+            parser.error("--max-wait-hours only applies with --depart-at")
+        if args.depart_at and args.max_wait_hours is None:
+            args.max_wait_hours = 3
         if "ADDRESS_INFO_API_KEY" not in os.environ:
             parser.error("set ADDRESS_INFO_API_KEY in .env or the environment")
-        ds = datasets.create_or_load(args.building, args.date, args.arrive_by, args.depart_at)
+        ds = datasets.create_or_load(args.building, args.date, args.arrive_by, args.depart_at, args.max_wait_hours)
         if ds.complete:
             datasets.log(f"{ds.id} is already complete")
         else:

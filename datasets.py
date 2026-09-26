@@ -2,7 +2,7 @@
 
 A dataset is either onward (fastest journey from every sampled building, arriving at the
 dataset's building by a time) or return (earliest journey from the dataset's building to
-every sampled building, leaving at a time, waiting overnight if need be).
+every sampled building, leaving at a time and waiting at most max_wait_hours for a departure).
 
     data/datasets/<id>/dataset.json
 
@@ -20,14 +20,14 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from functools import partial
 from pathlib import Path
 
 import h3
 
 from get_qvb_night_travel_time import COLUMNS as RETURN_COLUMNS
-from get_qvb_night_travel_time import next_morning_after, night_row
+from get_qvb_night_travel_time import night_row
 from get_sydney_building_travel_time import (
     COLUMNS as ONWARD_COLUMNS,
 )
@@ -46,7 +46,6 @@ from main import SYDNEY_TZ, api_get
 DATASETS_DIR = Path("data/datasets")
 SAMPLE_DATASET = "GANSW706029353_2026-10-12_arr0900"  # to the QVB, arriving by 9:00 on Mon 12 Oct 2026
 BATCH_SIZE = 1000
-RETURN_UNTIL = time(10, 0)  # return searches give up at this time the next morning
 
 INT_COLUMNS = {"journey_minutes", "walking_minutes", "walking_distance_m", "transports",
                "wait_minutes", "total_minutes", "searches"}
@@ -54,12 +53,16 @@ FLOAT_COLUMNS = {"depart_latitude", "depart_longitude"}
 BOOL_COLUMNS = {"has_bus", "has_train", "has_ferry", "has_tram", "next_morning"}
 
 
-def dataset_id(pid: str, day: date, arrive_by: time | None = None, depart_at: time | None = None) -> str:
-    """<pid>_<date>_arr<HHMM> for onward datasets, <pid>_<date>_dep<HHMM> for return ones."""
+def dataset_id(pid: str, day: date, arrive_by: time | None = None, depart_at: time | None = None,
+               max_wait_hours: int | None = None) -> str:
+    """<pid>_<date>_arr<HHMM> for onward datasets, <pid>_<date>_dep<HHMM>_w<max wait>h for return ones."""
     if (arrive_by is None) == (depart_at is None):
         raise ValueError("give exactly one of arrive_by or depart_at")
-    kind, at = ("arr", arrive_by) if arrive_by else ("dep", depart_at)
-    return f"{pid}_{day:%Y-%m-%d}_{kind}{at:%H%M}"
+    if arrive_by:
+        return f"{pid}_{day:%Y-%m-%d}_arr{arrive_by:%H%M}"
+    if max_wait_hours is None:
+        raise ValueError("a return dataset needs max_wait_hours")
+    return f"{pid}_{day:%Y-%m-%d}_dep{depart_at:%H%M}_w{max_wait_hours}h"
 
 
 @dataclass
@@ -117,9 +120,10 @@ def all_datasets() -> list[Dataset]:
     return [Dataset(json.loads(p.read_text())) for p in sorted(DATASETS_DIR.glob("*/dataset.json"))]
 
 
-def create_or_load(pid: str, day: date, arrive_by: time | None = None, depart_at: time | None = None) -> Dataset:
+def create_or_load(pid: str, day: date, arrive_by: time | None = None, depart_at: time | None = None,
+                   max_wait_hours: int | None = None) -> Dataset:
     """The dataset for these parameters, creating its folder and dataset.json if new."""
-    ds_id = dataset_id(pid, day, arrive_by, depart_at)
+    ds_id = dataset_id(pid, day, arrive_by, depart_at, max_wait_hours)
     if (DATASETS_DIR / ds_id / "dataset.json").exists():
         return load(ds_id)
     key = os.environ["ADDRESS_INFO_API_KEY"]
@@ -129,7 +133,8 @@ def create_or_load(pid: str, day: date, arrive_by: time | None = None, depart_at
         "building": {"id": pid, "name": address.get("building_name"), "address": address["full_address"],
                      "latitude": address["latitude"], "longitude": address["longitude"]},
         "date": day.isoformat(),
-        **({"arrive_by": f"{arrive_by:%H:%M}"} if arrive_by else {"depart_at": f"{depart_at:%H:%M}"}),
+        **({"arrive_by": f"{arrive_by:%H:%M}"} if arrive_by
+           else {"depart_at": f"{depart_at:%H:%M}", "max_wait_hours": max_wait_hours}),
         "created": now(),
     }
     ds = Dataset(meta)
@@ -143,7 +148,6 @@ class Target:
     cell: str
     pid: str
     address: str
-    had_journey: bool  # the sample run found a journey for it
 
 
 def sample_targets() -> list[Target]:
@@ -151,8 +155,7 @@ def sample_targets() -> list[Target]:
     sample = load(SAMPLE_DATASET)
     if not sample.complete:
         raise RuntimeError(f"sample dataset {SAMPLE_DATASET} is not complete")
-    return [Target(r["h3_cell"], r["address_detail_pid"], r["depart_building_address"], r["status"] == "ok")
-            for r in sample.meta["results"]]
+    return [Target(r["h3_cell"], r["address_detail_pid"], r["depart_building_address"]) for r in sample.meta["results"]]
 
 
 def collect(ds: Dataset, targets: list[Target], workers: int, limit: int | None = None) -> int:
@@ -179,8 +182,8 @@ def collect(ds: Dataset, targets: list[Target], workers: int, limit: int | None 
         task = lambda t: partial(journey_row, t.cell, t.pid, t.address, b["id"], ds.at)
     else:
         columns = RETURN_COLUMNS
-        until = next_morning_after(ds.at, RETURN_UNTIL)
-        task = lambda t: partial(night_row, t.cell, t.pid, t.address, t.had_journey, b["id"], ds.at, until)
+        until = ds.at + timedelta(hours=ds.meta["max_wait_hours"])
+        task = lambda t: partial(night_row, t.cell, t.pid, t.address, b["id"], ds.at, until)
     writer = BatchWriter(ds.dir, BATCH_SIZE, columns)
     failed = run_parallel(((t.cell, task(t)) for t in work), writer, workers)
     log(f"{ds.id}: {writer.written:,} written, {failed:,} failed (retried on the next run)")

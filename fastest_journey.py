@@ -85,20 +85,21 @@ def earliest_journey(
     give_up_at: datetime,
     api_key: str | None = None,
 ) -> tuple[dict | None, int]:
-    """Earliest-arriving journey leaving at or after `depart_at`, waiting overnight if need be.
+    """Earliest-arriving journey leaving between `depart_at` and `give_up_at`.
 
     The API only searches a couple of hours ahead, so when nothing runs, the search moves
     forward in SEARCH_STEP steps until a journey is found or `give_up_at` is passed.
-    Naive datetimes are Sydney local time. Returns the journey_stats() of the journey (or
-    None) and the number of searches made.
+    Journeys leaving after `give_up_at` are ignored. Naive datetimes are Sydney local time.
+    Returns the journey_stats() of the journey (or None) and the number of searches made.
     """
     api_key = api_key or os.environ["ADDRESS_INFO_API_KEY"]
     at, searches = depart_at, 0
     while at <= give_up_at:
         searches += 1
         response = plan_journey(from_pid, to_pid, api_key, depart_at=at.isoformat(), limit=10)
-        if response["journeys"]:
-            journey = min(response["journeys"], key=lambda j: (datetime.fromisoformat(j["arrival"]), j["duration_s"]))
+        journeys = [j for j in response["journeys"] if datetime.fromisoformat(j["departure"]) <= give_up_at]
+        if journeys:
+            journey = min(journeys, key=lambda j: (datetime.fromisoformat(j["arrival"]), j["duration_s"]))
             return journey_stats(journey), searches
         at += SEARCH_STEP
     return None, searches
