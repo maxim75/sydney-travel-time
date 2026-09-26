@@ -7,6 +7,7 @@ ADDRESS_INFO_API_KEY is read from the environment or a .env file.
 """
 
 import argparse
+import http.client
 import json
 import os
 import sys
@@ -44,6 +45,8 @@ def api_get(path: str, params: dict, api_key: str) -> dict:
         raise ApiError(f"{e.code} {e.reason} for {path}: {body}", status=e.code) from e
     except urllib.error.URLError as e:
         raise ApiError(f"Request to {path} failed: {e.reason}") from e
+    except (OSError, http.client.HTTPException) as e:  # timeouts, dropped or truncated responses
+        raise ApiError(f"Request to {path} failed: {e!r}") from e
 
 
 def resolve_address(text: str, api_key: str) -> dict:

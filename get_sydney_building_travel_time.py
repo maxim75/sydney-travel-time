@@ -26,11 +26,13 @@ import math
 import os
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, fields
 from datetime import date, datetime, timedelta
+from functools import partial
 from pathlib import Path
+from typing import TypeVar
 
 import h3
 
@@ -41,6 +43,7 @@ QVB = "GANSW706029353"  # 429-481 George Street, Sydney NSW 2000
 LOG_NAME = "processed.log"
 BATCH_PREFIX = "travel_times_"
 MAX_ATTEMPTS = 4
+T = TypeVar("T")
 COLUMNS = ["address_detail_pid", "status", "h3_cell", *(f.name for f in fields(JourneySummary))]
 
 
@@ -85,9 +88,10 @@ def append_log(log_path: Path, ids: list[str]) -> None:
 class BatchWriter:
     """Writes rows to numbered CSV files, then records their IDs in the process log."""
 
-    def __init__(self, output_dir: Path, batch_size: int):
+    def __init__(self, output_dir: Path, batch_size: int, columns: list[str] = COLUMNS):
         self.output_dir = output_dir
         self.batch_size = batch_size
+        self.columns = columns
         existing = batch_files(output_dir)
         self.next_index = int(existing[-1].stem.removeprefix(BATCH_PREFIX)) + 1 if existing else 1
         self.rows: list[dict] = []
@@ -105,7 +109,7 @@ class BatchWriter:
         path = self.output_dir / f"{BATCH_PREFIX}{self.next_index:05d}.csv"
         tmp = path.with_suffix(".csv.tmp")
         with tmp.open("w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=COLUMNS)
+            writer = csv.DictWriter(f, fieldnames=self.columns)
             writer.writeheader()
             writer.writerows(self.rows)
         tmp.replace(path)
@@ -117,20 +121,28 @@ class BatchWriter:
         log(f"Wrote {path.name}: {self.written:,} rows this run ({rate:.1f}/s)")
 
 
-def journey_row(pid: str, address: str, arrive_by: datetime) -> dict:
-    """Fastest journey from a building to the QVB, retrying rate limits and transient errors."""
-    # Address from the input CSV, so rows without a journey still show it.
-    base = {"address_detail_pid": pid, "depart_building_address": address}
+def with_retries(call: Callable[[], T]) -> T:
+    """Run an API call, retrying rate limits and server errors with exponential backoff."""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            journey = fastest_journey(pid, QVB, arrive_by)
-            break
+            return call()
         except ApiError as e:
-            if e.status == 404:  # Address missing from the API's copy of G-NAF
-                return {**base, "status": "not_found"}
             if (e.status is not None and e.status < 500 and e.status != 429) or attempt == MAX_ATTEMPTS:
                 raise
             time.sleep(2**attempt)
+    raise AssertionError("unreachable")
+
+
+def journey_row(pid: str, address: str, arrive_by: datetime) -> dict:
+    """Fastest journey from a building to the QVB."""
+    # Address from the input CSV, so rows without a journey still show it.
+    base = {"address_detail_pid": pid, "depart_building_address": address}
+    try:
+        journey = with_retries(lambda: fastest_journey(pid, QVB, arrive_by))
+    except ApiError as e:
+        if e.status == 404:  # Address missing from the API's copy of G-NAF
+            return {**base, "status": "not_found"}
+        raise
     if journey is None:
         return {**base, "status": "no_journey"}
     return {**base, "status": "ok", **asdict(journey)}
@@ -177,6 +189,43 @@ def pending_hexes(input_path: Path, processed: set[str], resolution: int, max_ca
         yield cell, [(pid, address) for pid, address, *_ in buildings[:max_candidates]]
 
 
+def run_parallel(tasks: Iterable[tuple[str, Callable[[], dict]]], writer: BatchWriter, workers: int) -> int:
+    """Run (label, task) pairs on a thread pool, adding each result row to `writer`.
+
+    Keeps a bounded queue instead of submitting everything at once. Failed tasks are logged
+    and not written, so the next run retries them. On Ctrl-C, completed results are saved.
+    Returns the number of failed tasks.
+    """
+    executor = ThreadPoolExecutor(max_workers=workers)
+    in_flight: dict[Future, str] = {}
+    failed = 0
+
+    def collect(futures) -> None:
+        nonlocal failed
+        for future in futures:
+            label = in_flight.pop(future)
+            try:
+                writer.add(future.result())
+            except Exception as e:  # one bad task shouldn't stop a run of hours
+                failed += 1
+                log(f"Failed {label}: {e!r}")
+
+    try:
+        for label, task in tasks:
+            in_flight[executor.submit(task)] = label
+            if len(in_flight) >= workers * 2:
+                collect(wait(in_flight, return_when=FIRST_COMPLETED).done)
+        collect(list(in_flight))
+    except KeyboardInterrupt:
+        log("Interrupted; saving completed results")
+        executor.shutdown(wait=False, cancel_futures=True)
+        collect([f for f in in_flight if f.done() and not f.cancelled()])
+    finally:
+        writer.flush()
+        executor.shutdown(wait=False, cancel_futures=True)
+    return failed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--input", type=Path, default=Path("data/sydney_buildings.csv"))
@@ -208,34 +257,10 @@ def main() -> int:
         work = itertools.islice(work, args.limit)
 
     writer = BatchWriter(args.output_dir, args.batch_size)
-    executor = ThreadPoolExecutor(max_workers=args.workers)
-    in_flight: dict[Future, str] = {}
-    failed = 0
-
-    def collect(futures) -> None:
-        nonlocal failed
-        for future in futures:
-            label = in_flight.pop(future)
-            try:
-                writer.add(future.result())
-            except ApiError as e:
-                failed += 1
-                log(f"Failed {label}: {e}")
-
-    try:
-        # Keep a bounded queue of requests instead of submitting all 1.7M at once.
-        for cell, candidates in work:
-            in_flight[executor.submit(first_ok_row, candidates, args.arrive_by, cell)] = cell or candidates[0][0]
-            if len(in_flight) >= args.workers * 2:
-                collect(wait(in_flight, return_when=FIRST_COMPLETED).done)
-        collect(list(in_flight))
-    except KeyboardInterrupt:
-        log("Interrupted; saving completed results")
-        executor.shutdown(wait=False, cancel_futures=True)
-        collect([f for f in in_flight if f.done() and not f.cancelled()])
-    finally:
-        writer.flush()
-        executor.shutdown(wait=False, cancel_futures=True)
+    failed = run_parallel(
+        ((cell or candidates[0][0], partial(first_ok_row, candidates, args.arrive_by, cell)) for cell, candidates in work),
+        writer, args.workers,
+    )
 
     log(f"Done: {writer.written:,} written, {failed:,} failed (will be retried on the next run)")
     return 1 if failed else 0
