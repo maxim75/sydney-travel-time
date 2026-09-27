@@ -31,7 +31,7 @@ from datasets import Dataset
 
 TEMPLATE = Path(__file__).parent / "map_template.html"
 SCALE = 100_000  # coordinates are stored as integers in 1e-5 degrees (~1 m)
-STATUS_CODES = {"ok": 1, "no_journey": 2, "not_found": 3}
+STATUS_CODES = {"ok": 1, "no_journey": 2, "not_found": 3, "walk_too_far": 4}
 
 # Suburb labels: tier 1 shows at every zoom, tier 2 once zoomed in.
 LABELS = {
@@ -81,12 +81,26 @@ def overlay(cells: list[str], ds: Dataset) -> dict:
 
     `minutes` is what the map colours by: the trip time for onward datasets, and the time
     from the requested departure to arrival (so including the wait) for return datasets.
+    Each trip's legs are [mode, route, minutes, metres, from, to], with mode and stop names
+    as indexes into the `legModes` and `stops` tables.
     """
     night = not ds.onward
     results = {r["h3_cell"]: r for r in ds.meta["results"]}
     names = ["status", "minutes", "trip", "wait", "morning", "walkMin", "walkM", "transports", "modes",
-             "depart", "arrive", "address"]
+             "depart", "arrive", "address", "legs"]
     out: dict[str, list] = {name: [] for name in names}
+    leg_modes: dict[str, int] = {}
+    stops: dict[str, int] = {}
+
+    def index(table: dict[str, int], value: str | None) -> int:
+        return table.setdefault(value or "", len(table))
+
+    def legs(row: dict) -> list | None:
+        if not row.get("legs"):
+            return None
+        return [[index(leg_modes, leg["mode"]), leg["route"] or "", leg["minutes"], leg["distance_m"],
+                 index(stops, leg["from"]), index(stops, leg["to"])] for leg in row["legs"]]
+
     for cell in cells:
         row = results.get(cell)
         ok = row is not None and row["status"] == "ok"
@@ -103,6 +117,7 @@ def overlay(cells: list[str], ds: Dataset) -> dict:
             "depart": hhmm(get("departure")),
             "arrive": hhmm(get("arrival")),
             "address": (row["address"] if night else row["depart_building_address"]) if row else "",
+            "legs": legs(row) if ok else None,
         }
         for name in names:
             out[name].append(values[name])
@@ -110,6 +125,8 @@ def overlay(cells: list[str], ds: Dataset) -> dict:
         for name in ("trip", "wait", "morning"):
             del out[name]
     out["computed"] = sum(1 for s in out["status"] if s)
+    out["legModes"] = list(leg_modes)
+    out["stops"] = list(stops)
     return {**describe(ds), **out}
 
 
@@ -191,6 +208,8 @@ def main() -> int:
                          help="Return: places with no departure within this many hours count as no journey (default: 3)")
     dataset.add_argument("--workers", type=int, default=3, help="Parallel requests (default: 3; the API slows beyond that)")
     dataset.add_argument("--limit", type=int, help="Testing: process at most this many more buildings in this run")
+    dataset.add_argument("--recollect", action="store_true",
+                         help="Collect a complete dataset again; its results are replaced once the new run is complete")
     parser.add_argument("--site", type=Path, default=Path("docs"), help="Output folder of the site (default: docs)")
     parser.add_argument("--buildings", type=Path, default=Path("data/sydney_buildings.csv"))
     parser.add_argument("--transit", type=Path, default=Path("data/transit_lines.json"),
@@ -210,8 +229,8 @@ def main() -> int:
         if "ADDRESS_INFO_API_KEY" not in os.environ:
             parser.error("set ADDRESS_INFO_API_KEY in .env or the environment")
         ds = datasets.create_or_load(args.building, args.date, args.arrive_by, args.depart_at, args.max_wait_hours)
-        if ds.complete:
-            datasets.log(f"{ds.id} is already complete")
+        if ds.complete and not args.recollect and not datasets.batch_files(ds.dir):
+            datasets.log(f"{ds.id} is already complete (use --recollect to collect it again)")
         else:
             targets = datasets.sample_targets()
             failed = datasets.collect(ds, targets, args.workers, args.limit)

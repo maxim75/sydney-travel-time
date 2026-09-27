@@ -8,6 +8,7 @@ are retried next run.
 """
 
 import csv
+import json
 import os
 import sys
 import time
@@ -109,14 +110,15 @@ def journey_row(cell: str, pid: str, address: str, anchor: str, arrive_by: datet
     # Address from the sample, so rows without a journey still show it.
     base = {"address_detail_pid": pid, "h3_cell": cell, "depart_building_address": address}
     try:
-        journey = with_retries(lambda: fastest_journey(pid, anchor, arrive_by))
+        journey, found_any = with_retries(lambda: fastest_journey(pid, anchor, arrive_by))
     except ApiError as e:
         if e.status == 404:  # Address missing from the API's copy of G-NAF
             return {**base, "status": "not_found"}
         raise
-    if journey is None:
-        return {**base, "status": "no_journey"}
-    return {**base, "status": "ok", **asdict(journey)}
+    if journey is None:  # walk_too_far: every journey found walks too far to or from a stop
+        return {**base, "status": "walk_too_far" if found_any else "no_journey"}
+    row = asdict(journey)
+    return {**base, "status": "ok", **row, "legs": json.dumps(row["legs"], ensure_ascii=False)}
 
 
 def run_parallel(tasks: Iterable[tuple[str, Callable[[], dict]]], writer: BatchWriter, workers: int) -> int:

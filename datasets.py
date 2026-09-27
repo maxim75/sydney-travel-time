@@ -48,7 +48,8 @@ SAMPLE_DATASET = "GANSW706029353_2026-10-12_arr0900"  # to the QVB, arriving by 
 BATCH_SIZE = 1000
 
 INT_COLUMNS = {"journey_minutes", "walking_minutes", "walking_distance_m", "transports",
-               "wait_minutes", "total_minutes", "searches"}
+               "wait_minutes", "total_minutes", "searches", "access_walk_m", "egress_walk_m"}
+JSON_COLUMNS = {"legs"}
 FLOAT_COLUMNS = {"depart_latitude", "depart_longitude"}
 BOOL_COLUMNS = {"has_bus", "has_train", "has_ferry", "has_tram", "next_morning"}
 
@@ -202,15 +203,21 @@ def typed(row: dict) -> dict:
             out[key] = float(value)
         elif key in BOOL_COLUMNS:
             out[key] = value == "True"
+        elif key in JSON_COLUMNS:
+            out[key] = json.loads(value)
         else:
             out[key] = value
     return out
 
 
 def merge(ds: Dataset, cells: set[str]) -> bool:
-    """Merge the batch CSVs into dataset.json once every cell has a row; True if complete."""
-    if ds.complete:
-        return True
+    """Merge the batch CSVs into dataset.json once every cell has a row; True if complete.
+
+    A complete dataset being collected again keeps its old results until the new batches
+    cover every cell, then they are replaced.
+    """
+    if not batch_files(ds.dir):
+        return ds.complete
     rows: dict[str, dict] = {}
     for path in batch_files(ds.dir):  # later batches win, e.g. a rerun of a cell
         with path.open(newline="") as f:
@@ -226,7 +233,7 @@ def merge(ds: Dataset, cells: set[str]) -> bool:
     ds.meta.update(
         finished=now(),
         counts={"ok": statuses.count("ok"), "no_journey": statuses.count("no_journey"),
-                "not_found": statuses.count("not_found"),
+                "walk_too_far": statuses.count("walk_too_far"), "not_found": statuses.count("not_found"),
                 "next_morning": sum(1 for r in results if r.get("next_morning"))},
         results=results,
     )

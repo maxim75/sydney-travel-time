@@ -14,6 +14,7 @@
   --ghost: #e8e7e1;
   --nojourney: #b3b1aa;
   --morning: #c2410c;
+  --toofar: #c026d3;
   --focus: #2a78d6;
   --r0: #f6d31a; --r1: #b5de2b; --r2: #6ece58; --r3: #35b779; --r4: #1f9e89;
   --r5: #26828e; --r6: #31688e; --r7: #3e4989; --r8: #482878; --r9: #440154;
@@ -24,7 +25,7 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --surface: #1a1a19; --panel: #232321; --ink: #ecebe6; --ink-2: #b4b3ad; --ink-3: #8a8983;
-    --hairline: #363532; --ghost: #2b2b28; --nojourney: #5d5c56; --morning: #f28a4b; --focus: #6da7ec;
+    --hairline: #363532; --ghost: #2b2b28; --nojourney: #5d5c56; --morning: #f28a4b; --toofar: #e879f9; --focus: #6da7ec;
     --r0: #fde725; --r1: #cde11d; --r2: #9dd93b; --r3: #6ccd5a; --r4: #43bf71;
     --r5: #25ac82; --r6: #1f968b; --r7: #2a88a8; --r8: #4a6fc6; --r9: #7a4ec4;
   }
@@ -32,7 +33,7 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --surface: #1a1a19; --panel: #232321; --ink: #ecebe6; --ink-2: #b4b3ad; --ink-3: #8a8983;
-  --hairline: #363532; --ghost: #2b2b28; --nojourney: #5d5c56; --morning: #f28a4b; --focus: #6da7ec;
+  --hairline: #363532; --ghost: #2b2b28; --nojourney: #5d5c56; --morning: #f28a4b; --toofar: #e879f9; --focus: #6da7ec;
   --r0: #fde725; --r1: #cde11d; --r2: #9dd93b; --r3: #6ccd5a; --r4: #43bf71;
   --r5: #25ac82; --r6: #1f968b; --r7: #2a88a8; --r8: #4a6fc6; --r9: #7a4ec4;
 }
@@ -87,6 +88,9 @@ canvas.dragging { cursor: grabbing; }
 .tip { position: absolute; z-index: 2; pointer-events: none; width: max-content; max-width: min(300px, calc(100% - 24px)); background: var(--surface); color: var(--ink); border: 1px solid var(--hairline); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / .14); padding: 10px 12px; display: grid; gap: 6px; font-size: 13px; }
 .tip strong { font-weight: 600; font-size: 14px; line-height: 1.25; }
 .tip .muted { color: var(--ink-3); }
+.tip .legs { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: 12px; border-top: 1px solid var(--hairline); padding-top: 6px; }
+.tip .legs li { display: grid; }
+.tip .legs b { font-weight: 600; }
 .tip dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
 .tip dt { color: var(--ink-3); }
 .tip dd { margin: 0; font-variant-numeric: tabular-nums; }
@@ -231,6 +235,7 @@ const D = JSON.parse(document.getElementById("map-data").textContent);
 let O = { direction: "onward", building: null, when: "", status: new Array(D.total).fill(0), modes: [], minutes: [], computed: 0 };
 const isReturn = () => O.direction === "return";
 const place = () => O.building ? O.building.name : "the building";
+const WALK_LIMIT = "1.2 km", TOO_FAR = `Stop too far (>${WALK_LIMIT} walk)`;
 const noTrip = () => `No trip within ${O.maxWaitHours} h`;  // return datasets only wait this long for a departure
 const hasMorning = () => isReturn() && O.morning.some(Boolean);
 const N = D.total, S = D.scale;
@@ -313,7 +318,8 @@ const FILTERS = {
   tonight: i => !O.morning[i],
   morning: i => O.morning[i] === 1,
 };
-// class per cell: 0 ghost, 1 no journey, 2 not found, 3..12 ramp steps 0-9, 13 only next morning
+// class per cell: 0 ghost, 1 no journey, 2 not found, 3..12 ramp steps 0-9, 13 only next morning,
+// 14 stop too far to walk to
 let metric = "time", filter = "all";
 const cls = new Uint8Array(N);
 function classify() {
@@ -324,6 +330,7 @@ function classify() {
     if (s === 1 && F(i)) cls[i] = metric === "time" && O.morning && O.morning[i] ? 13 : 3 + M.band(M.value(i));
     else if (filter === "all" && s === 2) cls[i] = 1;
     else if (filter === "all" && s === 3) cls[i] = 2;
+    else if (filter === "all" && s === 4) cls[i] = 14;
     else cls[i] = 0;
   }
 }
@@ -333,7 +340,7 @@ let T = {};
 function readTokens() {
   const cs = getComputedStyle(document.documentElement);
   const g = n => cs.getPropertyValue(n).trim();
-  T = { morning: g("--morning"), surface: g("--surface"), ink: g("--ink"), ink2: g("--ink-2"), ink3: g("--ink-3"), ghost: g("--ghost"), nojourney: g("--nojourney"),
+  T = { morning: g("--morning"), toofar: g("--toofar"), surface: g("--surface"), ink: g("--ink"), ink2: g("--ink-2"), ink3: g("--ink-3"), ghost: g("--ghost"), nojourney: g("--nojourney"),
         ramp: [...Array(10).keys()].map(k => g("--r" + k)) };
   const c = document.createElement("canvas"); c.width = c.height = 6;
   const x = c.getContext("2d");
@@ -388,7 +395,7 @@ function renderLayer() {
   }
   lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   lctx.fillStyle = T.surface; lctx.fillRect(0, 0, LW, LH);
-  const paths = Array.from({ length: 14 }, () => new Path2D());
+  const paths = Array.from({ length: 15 }, () => new Path2D());
   const m = R * k;
   for (let i = 0; i < N; i++) {
     const sx = cx[i] * k + ox, sy = cy[i] * k + oy;
@@ -400,7 +407,7 @@ function renderLayer() {
     }
     p.closePath();
   }
-  const fills = [T.ghost, T.nojourney, T.hatch, ...T.ramp, T.morning];
+  const fills = [T.ghost, T.nojourney, T.hatch, ...T.ramp, T.morning, T.toofar];
   paths.forEach((p, c) => { lctx.fillStyle = fills[c]; lctx.fill(p); });
   if (m > 7) {  // surface gap between hexagons once they are big enough to see
     lctx.strokeStyle = T.surface; lctx.lineWidth = Math.min(2, m / 10);
@@ -495,6 +502,18 @@ function drawLabels() {
 // ---- tooltip
 const tip = document.getElementById("tip");
 const MODE_NAMES = [[1, "Bus"], [2, "Train / Metro"], [4, "Ferry"], [8, "Light rail"]];
+const LEG_NAMES = { walk: "Walk", bus: "Bus", coach: "Coach", train: "Train", metro: "Metro", light_rail: "Light rail", ferry: "Ferry" };
+const km = m => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
+function legList(i) {  // one line per leg: mode, route, minutes, distance, then the stops it runs between
+  const legs = O.legs && O.legs[i];
+  if (!legs) return "";
+  return `<ol class="legs">${legs.map(([m, route, minutes, metres, from, to]) => {
+    const mode = O.legModes[m], walk = mode === "walk";
+    const name = `${LEG_NAMES[mode] || mode}${route ? " " + esc(route) : ""}`;
+    const stops = walk ? "" : `<span class="muted">${esc(O.stops[from])} → ${esc(O.stops[to])}</span>`;
+    return `<li><b>${name}</b> · ${minutes} min · ${km(metres)}${stops}</li>`;
+  }).join("")}</ol>`;
+}
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function showTip(i, sx, sy) {
   const s = O.status[i], sub = esc(D.localities[D.loc[i]]), night = isReturn();
@@ -509,13 +528,15 @@ function showTip(i, sx, sy) {
       ${night ? `<dt>Wait</dt><dd>${mins(O.wait[i])} at ${esc(place())}</dd><dt>Trip</dt><dd>${mins(O.trip[i])}</dd>` : ""}
       <dt>Walking</dt><dd>${O.walkMin[i]} min · ${fmt(O.walkM[i])} m</dd>
       <dt>Rides</dt><dd>${O.transports[i]}</dd></dl>
-      ${modes ? `<div class="modes">${modes}</div>` : ""}`;
+      ${modes ? `<div class="modes">${modes}</div>` : ""}${legList(i)}`;
   } else if (s === 2) {
     html = `<strong>${esc(O.address[i])}</strong><span class="muted">${night
       ? `No public transport departure from ${esc(place())} within ${O.maxWaitHours} hours of ${esc(O.when.split(" on ")[0])}.`
       : `No public transport journey found arriving by ${esc(O.when.split(" on ")[0])}.`}</span>`;
   } else if (s === 3) {
     html = `<strong>${esc(O.address[i])}</strong><span class="muted">The journey planner doesn't know this address or the nearby ones tried.</span>`;
+  } else if (s === 4) {
+    html = `<strong>${esc(O.address[i])}</strong><span class="muted">Every trip found needs a walk of more than ${WALK_LIMIT} to or from a stop.</span>`;
   } else {
     html = `<strong>${sub}</strong><span class="muted">Not computed yet.</span>`;
   }
@@ -590,7 +611,7 @@ function renderHeader() {
   const night = isReturn(), ok = [];
   for (let i = 0; i < N; i++) if (O.status[i] === 1 && !(night && O.morning[i])) ok.push(O.minutes[i]);
   ok.sort((a, b) => a - b);
-  const noJourney = O.status.filter(s => s === 2).length;
+  const noJourney = O.status.filter(s => s === 2).length, tooFar = O.status.filter(s => s === 4).length;
   const morning = night ? O.morning.reduce((a, b) => a + b, 0) : 0;
   const pct = O.computed / N;
   const b = O.building;
@@ -611,6 +632,7 @@ function renderHeader() {
     <div class="stat"><b>${ok.length ? median(ok) + " min" : "–"}</b><span>${night ? "median time" : "median trip"}</span></div>
     <div class="stat"><b>${ok.length ? ok[0] + " min" : "–"}</b><span>fastest</span></div>
     ${morning ? `<div class="stat"><b>${fmt(morning)}</b><span>only reachable next morning</span></div>` : ""}
+    <div class="stat"><b>${fmt(tooFar)}</b><span>with stops over ${WALK_LIMIT} walk</span></div>
     <div class="stat"><b>${fmt(noJourney)}</b><span>${night ? `with no trip within ${O.maxWaitHours} h` : "with no journey found"}</span></div>`;
   document.getElementById("median-head").textContent = night ? "Median time" : "Median trip";
 }
@@ -618,7 +640,7 @@ function renderHeader() {
 function renderLegend() {
   const M = metricOf(metric);
   document.getElementById("legend-title").textContent = M.title;
-  const counts = new Array(14).fill(0);
+  const counts = new Array(15).fill(0);
   for (let i = 0; i < N; i++) counts[cls[i]]++;
   const bandMax = Math.max(1, ...counts.slice(3));
   const row = (sw, label, n, bar) => `<span class="sw ${sw.cls || ""}" style="${sw.bg ? `background:${sw.bg}` : ""}"></span>
@@ -628,6 +650,7 @@ function renderLegend() {
   if (counts[13]) html += row({ bg: "var(--morning)" }, "Only next morning", counts[13], true);
   html += `<span class="sep"></span>`;
   if (filter === "all") {
+    html += row({ bg: "var(--toofar)" }, TOO_FAR, counts[14]);
     html += row({ bg: "var(--nojourney)" }, isReturn() ? noTrip() : "No journey found", counts[1]);
     if (counts[2]) html += row({ cls: "hatch" }, "Address not in planner", counts[2]);
     html += row({ bg: "var(--ghost)" }, "Not computed yet", N - O.computed);
@@ -649,7 +672,8 @@ function renderKey() {
   let extra = hasMorning() && metric === "time" && filter !== "tonight"
     ? item(`<i class="sw" style="background:var(--morning)"></i>`, "Next morning") : "";
   extra += filter === "all"
-    ? item(`<i class="sw" style="background:var(--nojourney)"></i>`, isReturn() ? noTrip() : "No journey")
+    ? item(`<i class="sw" style="background:var(--toofar)"></i>`, "Stop too far") +
+      item(`<i class="sw" style="background:var(--nojourney)"></i>`, isReturn() ? noTrip() : "No journey")
     : item(`<i class="sw" style="background:var(--ghost)"></i>`, "Other trips");
   if (showLines) extra +=
     item(line("stroke:var(--ink);stroke-width:2"), "Train / metro") +
