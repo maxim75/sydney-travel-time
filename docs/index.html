@@ -562,6 +562,16 @@ function setHover(i, sx, sy) {
   if (i !== hover) { hover = i; schedule(); }
   if (i >= 0) showTip(i, sx, sy); else tip.hidden = true;
 }
+// Google Analytics event for a clicked or tapped hexagon, with its centre in degrees
+function trackClick(i) {
+  if (typeof gtag !== "function") return;
+  gtag("event", "hexagon_click", {
+    latitude: +(D.center[2 * i + 1] / S).toFixed(5),
+    longitude: +(D.center[2 * i] / S).toFixed(5),
+    suburb: D.localities[D.loc[i]],
+    dataset: picker.value,
+  });
+}
 
 // ---- pointer interaction: drag to pan, pinch or wheel to zoom, hover or tap to inspect
 const ptrs = new Map();
@@ -600,6 +610,7 @@ const release = e => {
     const i = cellAt((x - tx) / k, (y - ty) / k);
     pinned = e.pointerType !== "mouse" && i >= 0;
     setHover(i, x, y);
+    if (i >= 0) trackClick(i);
   }
 };
 canvas.addEventListener("pointerup", release);
