@@ -130,4 +130,5 @@ td .sw { display: inline-block; vertical-align: -2px; margin-right: 6px; width: 
   .below { grid-template-columns: 1fr; }
   .mapbox { height: clamp(380px, 64vh, 620px); }
   .hint { display: none; }
+  .picker select { width: 100%; }
 }

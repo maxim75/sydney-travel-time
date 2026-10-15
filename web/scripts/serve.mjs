@@ -16,7 +16,9 @@ createServer(async (req, res) => {
   const { pathname } = new URL(req.url ?? "/", "http://localhost");
   if (pathname === "/" || pathname === base) { res.writeHead(302, { location: `${base}/` }); return res.end(); }
   if (!pathname.startsWith(`${base}/`)) { res.writeHead(404); return res.end("Not found"); }
-  let path = join(root, normalize(decodeURIComponent(pathname.slice(base.length))));
+  let path;
+  try { path = join(root, normalize(decodeURIComponent(pathname.slice(base.length)))); }
+  catch { res.writeHead(400); return res.end("Bad request"); }  // malformed percent-encoding
   if (path !== root && !path.startsWith(root + sep)) { res.writeHead(403); return res.end(); }
   try {
     if ((await stat(path)).isDirectory()) path = join(path, "index.html");
