@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emptyOverlay, loadDataset, loadSite, pickInitialDataset } from "../lib/data";
+import { buildGeometry } from "../lib/geometry";
 import { classify, hasMorning, isReturn, metricOf, type FilterName, type MetricName } from "../lib/metrics";
 import { classCounts, suburbRows } from "../lib/stats";
 import { rememberDataset, rememberedDataset } from "../lib/storage";
@@ -9,6 +10,7 @@ import Controls from "./Controls";
 import Credits from "./Credits";
 import Header from "./Header";
 import Legend from "./Legend";
+import MapCanvas, { type MapHandle } from "./MapCanvas";
 import MapKey from "./MapKey";
 import SuburbTable from "./SuburbTable";
 
@@ -43,6 +45,9 @@ function Explorer({ site }: { site: SiteData }) {
   const cache = useRef(new Map<string, DatasetData>());
   const wanted = useRef("");
   const initial = useRef(datasetId);
+  const map = useRef<MapHandle>(null);
+  const geometry = useMemo(() => buildGeometry(site), [site]);
+  const zoomToSuburb = useCallback((cells: number[]) => map.current?.zoomToCells(cells), []);
 
   // Fetch map_data/<id>.json on selection, and remember the choice per viewer
   const selectDataset = useCallback(async (id: string) => {
@@ -79,12 +84,11 @@ function Explorer({ site }: { site: SiteData }) {
         metric={metric} onMetric={setMetric} filter={filter} onFilter={setFilter}
         nightFilters={hasMorning(overlay)} isReturn={isReturn(overlay)}
         hasLines={!!site.transit} showLines={lines} onToggleLines={() => setShowLines((s) => !s)} />
-      <div className="mapbox">
-        <MapKey metricName={metric} filter={filter} overlay={overlay} showLines={lines} />
-      </div>
+      <MapCanvas ref={map} site={site} geometry={geometry} cls={cls} overlay={overlay} showLines={lines} datasetId={datasetId}
+        mapKey={<MapKey metricName={metric} filter={filter} overlay={overlay} showLines={lines} />} />
       <div className="below">
         <Legend metricName={metric} filter={filter} counts={counts} overlay={overlay} n={n} />
-        <SuburbTable rows={rows} isReturn={isReturn(overlay)} timeBand={timeBand} onPick={() => {}} />
+        <SuburbTable rows={rows} isReturn={isReturn(overlay)} timeBand={timeBand} onPick={zoomToSuburb} />
       </div>
       <Credits />
     </div>
