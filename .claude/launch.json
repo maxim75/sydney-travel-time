@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "map-preview",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "docs"],
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "exec python3 -m http.server ${PORT:-8765} --directory docs"],
       "port": 8765
     }
   ]
