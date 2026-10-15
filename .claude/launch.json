@@ -4,8 +4,14 @@
     {
       "name": "map-preview",
       "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "exec python3 -m http.server ${PORT:-8765} --directory docs"],
+      "runtimeArgs": ["-c", "exec node web/scripts/serve.mjs docs ${PORT:-8765}"],
       "port": 8765
+    },
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd web && exec npx next dev --port ${PORT:-3000}"],
+      "port": 3000
     }
   ]
 }
