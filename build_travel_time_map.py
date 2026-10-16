@@ -1,12 +1,13 @@
-"""Create travel time datasets and build the static map site from them.
+"""Create travel time datasets and build the data the map web app shows.
 
 With dataset parameters, creates (or resumes) the dataset for that building, date and
 time, collects its journeys for every sampled hexagon, merges the results into its
-dataset.json when complete, then rebuilds the site. Without them, only rebuilds the site.
+dataset.json when complete, then rebuilds the site data. Without them, only rebuilds the site data.
 
-The site (default docs/, served by GitHub Pages) is index.html, with the hexagons, suburb
-labels, transit lines and the list of complete datasets embedded, plus one compact
+The site data (default web/public/, served by the Next.js app in web/) is site.json, with
+the hexagons, suburb labels, transit lines and the list of complete datasets, plus one compact
 map_data/<id>.json per complete dataset that the page fetches when it is selected.
+Publish the site to docs/ (GitHub Pages) with `npm run publish-site` in web/.
 
 Usage:
     uv run build_travel_time_map.py
@@ -29,7 +30,6 @@ import h3
 import datasets
 from datasets import Dataset
 
-TEMPLATE = Path(__file__).parent / "map_template.html"
 SCALE = 100_000  # coordinates are stored as integers in 1e-5 degrees (~1 m)
 STATUS_CODES = {"ok": 1, "no_journey": 2, "not_found": 3, "walk_too_far": 4}
 
@@ -187,11 +187,9 @@ def build_site(args: argparse.Namespace) -> None:
         "datasets": sorted((describe(ds) for ds in complete), key=lambda d: d["label"]),
         "transit": json.loads(args.transit.read_text()) if args.transit.exists() else None,
     }
-    payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")
-    index = args.site / "index.html"
-    index.write_text(TEMPLATE.read_text().replace("/*__DATA__*/null", payload))
-    (args.site / ".nojekyll").touch()
-    print(f"Wrote {index} ({index.stat().st_size / 1e6:.1f} MB): {len(cells):,} hexagons, {len(complete)} datasets")
+    path = args.site / "site.json"
+    path.write_text(json.dumps(data, separators=(",", ":"), ensure_ascii=False))
+    print(f"Wrote {path} ({path.stat().st_size / 1e6:.1f} MB): {len(cells):,} hexagons, {len(complete)} datasets")
 
 
 def main() -> int:
@@ -210,7 +208,8 @@ def main() -> int:
     dataset.add_argument("--limit", type=int, help="Testing: process at most this many more buildings in this run")
     dataset.add_argument("--recollect", action="store_true",
                          help="Collect a complete dataset again; its results are replaced once the new run is complete")
-    parser.add_argument("--site", type=Path, default=Path("docs"), help="Output folder of the site (default: docs)")
+    parser.add_argument("--site", type=Path, default=Path("web/public"),
+                        help="Folder the map web app serves its data from (default: web/public)")
     parser.add_argument("--buildings", type=Path, default=Path("data/sydney_buildings.csv"))
     parser.add_argument("--transit", type=Path, default=Path("data/transit_lines.json"),
                         help="Rail, light rail and ferry lines from get_transit_lines.py (skipped if missing)")

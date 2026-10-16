@@ -18,3 +18,14 @@ data/*
 data/datasets/*/*
 !data/datasets/*/dataset.json
 sydney_buildings.csv
+
+# Web app
+web/node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
+web/test-results/
+web/playwright-report/
+web/public/site.json
+web/public/map_data/
